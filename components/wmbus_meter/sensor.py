@@ -21,7 +21,8 @@ RegularSensor = wmbus_meter_ns.class_("Sensor", BaseSensor, sensor.Sensor)
 
 def default_unit_of_measurement(config):
     if CONF_UNIT_OF_MEASUREMENT not in config:
-        config[CONF_UNIT_OF_MEASUREMENT] = get_human_readable_unit(config[CONF_FIELD])
+        if unit := get_human_readable_unit(config[CONF_FIELD]):
+            config[CONF_UNIT_OF_MEASUREMENT] = unit
     return config
 
 
