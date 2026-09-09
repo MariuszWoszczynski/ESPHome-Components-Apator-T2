@@ -6,7 +6,7 @@
   },
   "customManagers": [
     {
-      "managerFilePatterns": [".github/workflows/build.yaml"],
+      "managerFilePatterns": [".github/workflows/build_*.yaml"],
       "fileFormat": "yaml",
       "customType": "jsonata",
       "matchStrings": [

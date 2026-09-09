@@ -1,0 +1,31 @@
+name: Build Socket Transmitter
+
+on:
+  pull_request:
+    paths:
+      - "**/*socket_transmitter*/**"
+      - "**/*socket_transmitter*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build socket_transmitter (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - esp32
+          - esp32s3
+          - esp32c3
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Build firmware
+        id: esphome_build
+        uses: esphome/build-action@v8.1.0
+        with:
+          yaml-file: tests/socket_transmitter.yaml
+          version: "2026.8.2"
+          substitutions: |
+            variant=${{ matrix.variant }}

@@ -241,7 +241,7 @@ const char* toString(DifSignedness s);
 DifSignedness toDifSignedness(const char *s);
 
 // Keep unscoped flag names out of the global namespace (ESP-IDF defines STATUS).
-namespace wmbus_print_properties
+namespace wmbusmeters
 {
     enum PrintProperty
     {
@@ -255,7 +255,7 @@ namespace wmbus_print_properties
     };
 }
 
-using PrintProperty = wmbus_print_properties::PrintProperty;
+using PrintProperty = wmbusmeters::PrintProperty;
 
 int toBit(PrintProperty p);
 const char* toString(PrintProperty p);

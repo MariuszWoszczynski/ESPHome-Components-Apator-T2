@@ -2,7 +2,7 @@ esphome:
   name: test
 
 esp32:
-  board: esp32dev
+  variant: ${variant}
   framework:
     type: esp-idf
 
@@ -22,12 +22,6 @@ spi:
   mosi_pin: GPIO1
   miso_pin: GPIO2
 
-socket_transmitter:
-  id: test_transmitter
-  ip_address: 192.168.1.1
-  port: 12345
-  protocol: TCP
-
 wmbus_common:
   drivers: all
 
@@ -36,10 +30,6 @@ wmbus_radio:
   cs_pin: GPIO3
   reset_pin: GPIO4
   irq_pin: GPIO5
-  on_frame:
-    - wmbus_radio.send_frame_with_socket:
-        id: test_transmitter
-        format: rtlwmbus
 
 wmbus_meter:
   id: test_meter
