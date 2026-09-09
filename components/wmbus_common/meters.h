@@ -240,16 +240,22 @@ enum class DifSignedness
 const char* toString(DifSignedness s);
 DifSignedness toDifSignedness(const char *s);
 
-enum PrintProperty
+// Keep unscoped flag names out of the global namespace (ESP-IDF defines STATUS).
+namespace wmbusmeters
 {
-    REQUIRED = 1, // If no data has arrived, then print this field anyway with NaN or null.
-    DEPRECATED = 2, // This field is about to be removed or changed in a newer driver, which will have a new name.
-    STATUS = 4, // This is >the< status field and it should read OK of not error flags are set.
-    INCLUDE_TPL_STATUS = 8, // This text field also includes the tpl status decoding. multiple OK:s collapse to a single OK.
-    INJECT_INTO_STATUS = 16, // This text field is injected into the already defined status field. multiple OK:s collapse.
-    HIDE = 32, // This field is only used in calculations, do not print it!
-    Unknown = 1024
-};
+    enum PrintProperty
+    {
+        REQUIRED = 1, // If no data has arrived, then print this field anyway with NaN or null.
+        DEPRECATED = 2, // This field is about to be removed or changed in a newer driver, which will have a new name.
+        STATUS = 4, // This is >the< status field and it should read OK of not error flags are set.
+        INCLUDE_TPL_STATUS = 8, // This text field also includes the tpl status decoding. multiple OK:s collapse to a single OK.
+        INJECT_INTO_STATUS = 16, // This text field is injected into the already defined status field. multiple OK:s collapse.
+        HIDE = 32, // This field is only used in calculations, do not print it!
+        Unknown = 1024
+    };
+}
+
+using PrintProperty = wmbusmeters::PrintProperty;
 
 int toBit(PrintProperty p);
 const char* toString(PrintProperty p);

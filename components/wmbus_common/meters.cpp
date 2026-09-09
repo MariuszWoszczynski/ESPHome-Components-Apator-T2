@@ -2329,7 +2329,7 @@ bool MeterCommonImplementation::addOptionalLibraryFields(std::string field_names
         addStringField(
             "status",
             "Status and error flags."+help,
-            STATUS | INCLUDE_TPL_STATUS);
+            PrintProperty::STATUS | PrintProperty::INCLUDE_TPL_STATUS);
         markLastFieldAsLibrary();
     }
 
