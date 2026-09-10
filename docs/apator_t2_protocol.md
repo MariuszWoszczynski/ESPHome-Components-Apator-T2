@@ -1,0 +1,75 @@
+# Experimental Apator AT-WMBUS-16-1 T2 programming
+
+This document records the wire format reconstructed from inkaSOID 1.50.1. It
+has a deterministic host-side test vector, but has not yet been confirmed with
+an AT-WMBUS-16-1 overlay. Treat it as experimental.
+
+## Transmission sequence
+
+The command is prepared and armed first. The radio remains in T1 receive mode
+until it receives an uplink whose link-layer ID matches the selected overlay.
+It then switches to the T2 other-to-meter PHY and sends the command after the
+minimum response delay. This timing requirement means that periodically sending
+the command without observing the overlay first is not equivalent.
+
+## Period register
+
+inkaSOID writes overlay register `0xB0` with five one-byte values:
+
+1. normal period;
+2. economy-hours period;
+3. economy-weekday period;
+4. economy-month-day period;
+5. economy-month period.
+
+Each byte is the number of ten-second units, so accepted values are 10 through
+2550 seconds in ten-second steps. The ESPHome action currently writes the same
+value to all five profiles.
+
+The register data placed in the write command is:
+
+```text
+00 FF FF 00 B0 05 PP PP PP PP PP
+```
+
+where `PP = period_seconds / 10`.
+
+## Frame construction
+
+- Link-layer function: `REQ_UD2` (`0x5B`).
+- Manufacturer: Apator (`APA`, `01 06` on air).
+- Source address/version/type used by inkaSOID: `46 00 00 00 02 03`.
+- Target address: four-byte little-endian BCD meter ID, followed by
+  manufacturer, version and device type.
+- Transport CI: `0x5B`; access number `0x01`; status `0x00`; AES-CBC mode 5.
+- Cleartext starts with `2F 2F`, followed by the padded overlay write command.
+- The command and data-link blocks use the EN 13757 CRC polynomial `0x3D65`.
+- AES IV consists of target manufacturer, target ID, version, device type and
+  eight bytes of `0x01`.
+- Format-A CRCs are inserted before Manchester encoding.
+
+## T2 other-to-meter PHY
+
+- frequency: 868.3 MHz;
+- deviation: +/-50 kHz;
+- chip rate: 32.768 kchip/s;
+- Manchester mapping: zero to `10`, one to `01`;
+- synchronization bytes configured in the SX1276: `54 76 96`.
+
+## Deterministic test vector
+
+For meter ID `12345678`, period 60 seconds, version `5`, device type `7` and an
+all-zero key, the logical frame before data-link CRC insertion is:
+
+```text
+365b01064600000002035b785634120106050701002005cbc6edd25eb0132bf31d2828837b68d67d246fa1b70ae9d8ab34e0c1633b9b54
+```
+
+The CRC-bearing frame is:
+
+```text
+365b0106460000000203c42f5b785634120106050701002005cbc6ede119d25eb0132bf31d2828837b68d67d246f85dfa1b70ae9d8ab34e0c1633b9b54dfb2
+```
+
+The radio payload is 127 bytes after Manchester encoding and its eight-chip
+postamble. `tests/apator_t2_vector_test.cpp` checks the complete payload.

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <vector>
 #include "esphome/core/optional.h"
 #include "esphome/components/spi/spi.h"
 #include "freertos/FreeRTOS.h"
@@ -24,6 +25,11 @@ class RadioTransceiver : public Component,
   virtual const char *get_name() = 0;
 
   virtual bool read(uint8_t *buffer, size_t length) = 0;
+
+  // Transmit an already Manchester-coded T2 other-to-meter payload.  The
+  // transceiver supplies the T2 preamble/synchronisation and restores its
+  // receive configuration before returning.
+  virtual bool transmit_t2(const std::vector<uint8_t> &payload, uint8_t power_dbm) = 0;
 
   void set_spi(spi::SPIDelegate *spi);
   void set_reset_pin(InternalGPIOPin *reset_pin);

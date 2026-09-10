@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <array>
 
 #include "esphome/core/helpers.h"
 #include "esphome/components/wmbus_common/wmbus.h"
@@ -32,6 +33,7 @@ struct Packet {
 
   std::optional<Frame> convert_to_frame();
   const std::vector<uint8_t> &get_raw_data() const;
+  bool matches_meter_id(const std::array<uint8_t, 4> &meter_id_bcd) const;
 
  protected:
   std::vector<uint8_t> data_;

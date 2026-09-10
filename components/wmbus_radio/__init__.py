@@ -28,6 +28,13 @@ CONF_ON_FRAME = "on_frame"
 CONF_RADIO_TYPE = "radio_type"
 CONF_MARK_AS_HANDLED = "mark_as_handled"
 CONF_PACKET_TRIGGER_ID = "packet_trigger_id"
+CONF_METER_ID = "meter_id"
+CONF_PERIOD = "period"
+CONF_VERSION = "version"
+CONF_DEVICE_TYPE = "device_type"
+CONF_AES_KEY = "aes_key"
+CONF_ATTEMPTS = "attempts"
+CONF_POWER_DBM = "power_dbm"
 
 radio_ns = cg.esphome_ns.namespace("wmbus_radio")
 RadioComponent = radio_ns.class_("Radio", cg.Component)
@@ -40,6 +47,7 @@ FrameTrigger = radio_ns.class_("FrameTrigger", automation.Trigger.template(Frame
 Packet = radio_ns.class_("Packet")
 PacketPtr = Packet.operator("ptr")
 PacketTrigger = radio_ns.class_("PacketTrigger", automation.Trigger.template(PacketPtr))
+ApatorSetPeriodAction = radio_ns.class_("ApatorSetPeriodAction", automation.Action)
 
 TRANSCEIVER_NAMES = {
     r.stem.removeprefix("transceiver_").upper()
@@ -157,3 +165,57 @@ with suppress(ImportError):
         cg.add(var.set_data(template_))
 
         return var
+
+
+def validate_apator_meter_id(value):
+    value = cv.string_strict(value)
+    if not value.isdigit() or not 1 <= len(value) <= 8:
+        raise cv.Invalid("meter_id must contain 1 to 8 decimal digits")
+    return value
+
+
+def validate_apator_key(value):
+    value = cv.string_strict(value)
+    if len(value) != 32 or any(c not in "0123456789abcdefABCDEF" for c in value):
+        raise cv.Invalid("aes_key must contain exactly 32 hexadecimal characters")
+    return value
+
+
+def validate_apator_period(value):
+    value = cv.int_range(min=10, max=2550)(value)
+    if value % 10:
+        raise cv.Invalid("period must be a multiple of 10 seconds")
+    return value
+
+
+APATOR_SET_PERIOD_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(RadioComponent),
+        cv.Required(CONF_METER_ID): cv.templatable(validate_apator_meter_id),
+        cv.Required(CONF_PERIOD): cv.templatable(validate_apator_period),
+        cv.Optional(CONF_VERSION, default=5): cv.templatable(cv.int_range(min=0, max=255)),
+        cv.Optional(CONF_DEVICE_TYPE, default=7): cv.templatable(cv.int_range(min=0, max=255)),
+        cv.Optional(CONF_AES_KEY, default="00000000000000000000000000000000"): cv.templatable(validate_apator_key),
+        cv.Optional(CONF_ATTEMPTS, default=3): cv.templatable(cv.int_range(min=1, max=10)),
+        cv.Optional(CONF_POWER_DBM, default=10): cv.templatable(cv.int_range(min=2, max=17)),
+    }
+)
+
+
+@automation.register_action(
+    "wmbus_radio.apator_set_period",
+    ApatorSetPeriodAction,
+    APATOR_SET_PERIOD_SCHEMA,
+    synchronous=True,
+)
+async def apator_set_period_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, parent)
+    cg.add(var.set_meter_id(await cg.templatable(config[CONF_METER_ID], args, cg.std_string)))
+    cg.add(var.set_period_seconds(await cg.templatable(config[CONF_PERIOD], args, cg.uint16)))
+    cg.add(var.set_version(await cg.templatable(config[CONF_VERSION], args, cg.uint8)))
+    cg.add(var.set_device_type(await cg.templatable(config[CONF_DEVICE_TYPE], args, cg.uint8)))
+    cg.add(var.set_aes_key(await cg.templatable(config[CONF_AES_KEY], args, cg.std_string)))
+    cg.add(var.set_attempts(await cg.templatable(config[CONF_ATTEMPTS], args, cg.uint8)))
+    cg.add(var.set_power_dbm(await cg.templatable(config[CONF_POWER_DBM], args, cg.uint8)))
+    return var

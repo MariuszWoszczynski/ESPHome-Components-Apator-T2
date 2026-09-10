@@ -1,5 +1,6 @@
 #include "packet.h"
 
+#include <algorithm>
 #include <ctime>
 
 #include "esphome/core/helpers.h"
@@ -200,6 +201,18 @@ std::optional<Frame> Packet::convert_to_frame() {
 }
 
 const std::vector<uint8_t> &Packet::get_raw_data() const { return data_; }
+
+bool Packet::matches_meter_id(const std::array<uint8_t, 4> &meter_id_bcd) const {
+  if (this->link_mode_ != LinkMode::T1)
+    return false;
+  auto raw = this->data_;
+  auto decoded = decode3of6(raw);
+  if (!decoded)
+    return false;
+  auto frame = decoded.value();
+  removeAnyDLLCRCs(frame);
+  return frame.size() >= 10 && std::equal(meter_id_bcd.begin(), meter_id_bcd.end(), frame.begin() + 4);
+}
 
 Frame::Frame(Packet *packet)
     : data_(std::move(packet->data_)),
