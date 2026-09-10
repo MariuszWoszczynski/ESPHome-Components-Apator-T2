@@ -11,7 +11,7 @@
   { \
     auto result = (expr); \
     if (!!result != expected) { \
-      ESP_LOGE(TAG, "Assertion failed: %s -> %d", #expr, result); \
+      ESP_LOGE(TAG, "Assertion failed: %s", #expr); \
       before_exit; \
       return; \
     } \
