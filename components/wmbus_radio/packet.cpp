@@ -225,7 +225,8 @@ static uint16_t crc16_en13757_(const uint8_t *data, size_t length) {
 bool Packet::decode_t1_format_a(std::vector<uint8_t> *frame) const {
   if (frame == nullptr || this->link_mode_ != LinkMode::T1)
     return false;
-  auto decoded = decode3of6(this->data_);
+  auto raw = this->data_;
+  auto decoded = decode3of6(raw);
   if (!decoded || decoded->empty())
     return false;
 
