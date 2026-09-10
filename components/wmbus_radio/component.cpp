@@ -27,16 +27,22 @@ void Radio::setup() {
   ASSERT_SETUP(this->packet_queue_ = xQueueCreate(3, sizeof(Packet *)));
   ASSERT_SETUP(this->command_queue_ = xQueueCreate(3, sizeof(PendingCommand *)));
   ASSERT_SETUP(this->result_queue_ = xQueueCreate(3, sizeof(ProgrammingResult *)));
-
-  ASSERT_SETUP(xTaskCreate((TaskFunction_t) this->receiver_task, "radio_recv", 3 * 1024, this, 2,
-                           &(this->receiver_task_handle_)));
-
-  ESP_LOGI(TAG, "Receiver task created [%p]", this->receiver_task_handle_);
-
-  this->radio->attach_data_interrupt(Radio::wakeup_receiver_task_from_isr, &(this->receiver_task_handle_));
 }
 
 void Radio::loop() {
+  if (this->receiver_task_handle_ == nullptr) {
+    if (xTaskCreate((TaskFunction_t) this->receiver_task, "radio_recv", 3 * 1024, this, 2,
+                    &(this->receiver_task_handle_)) != pdPASS) {
+      ESP_LOGE(TAG, "Failed to create receiver task");
+      this->mark_failed();
+      return;
+    }
+    // loop() starts only after every component has completed setup.  Attaching
+    // DIO1 here prevents the receiver task from racing the SX1276 setup.
+    this->radio->attach_data_interrupt(Radio::wakeup_receiver_task_from_isr, &(this->receiver_task_handle_));
+    ESP_LOGI(TAG, "Receiver task created [%p]", this->receiver_task_handle_);
+  }
+
   ProgrammingResult *result;
   while (xQueueReceive(this->result_queue_, &result, 0) == pdPASS) {
     this->on_apator_result_callback_manager_.call(result->result, result->desired_period, result->actual_period);
@@ -65,9 +71,12 @@ void Radio::loop() {
 }
 
 void IRAM_ATTR Radio::wakeup_receiver_task_from_isr(TaskHandle_t *arg) {
-  BaseType_t xHigherPriorityTaskWoken;
-  vTaskNotifyGiveFromISR(*arg, &xHigherPriorityTaskWoken);
-  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+  BaseType_t higher_priority_task_woken = pdFALSE;
+  if (arg != nullptr && *arg != nullptr) {
+    vTaskNotifyGiveFromISR(*arg, &higher_priority_task_woken);
+    if (higher_priority_task_woken == pdTRUE)
+      portYIELD_FROM_ISR(higher_priority_task_woken);
+  }
 }
 
 void Radio::receive_frame() {
@@ -255,11 +264,14 @@ bool Radio::arm_apator_period(const std::string &meter_id, uint16_t period_secon
     ESP_LOGE(TAG, "Apator T2 command queue is full");
     return false;
   }
-  xTaskNotifyGive(this->receiver_task_handle_);
+  if (this->receiver_task_handle_ != nullptr)
+    xTaskNotifyGive(this->receiver_task_handle_);
   return true;
 }
 
 void Radio::receiver_task(Radio *arg) {
+  // Let loop() finish attaching DIO1 before touching the transceiver.
+  vTaskDelay(1);
   ESP_LOGE(TAG, "Hello from radio task!");
   int counter = 0;
   while (true)
