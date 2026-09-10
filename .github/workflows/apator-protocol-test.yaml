@@ -18,3 +18,13 @@ jobs:
           -o apator_t2_vector_test
       - name: Run protocol test
         run: ./apator_t2_vector_test
+
+  esphome_config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Build Apator configuration
+        uses: esphome/build-action@v7
+        with:
+          yaml-file: tests/apator_compile.yaml

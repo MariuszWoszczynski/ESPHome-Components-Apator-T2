@@ -1,0 +1,43 @@
+esphome:
+  name: apator-compile-test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: ../components
+
+logger:
+
+spi:
+  clk_pin: GPIO0
+  mosi_pin: GPIO1
+  miso_pin: GPIO2
+
+wmbus_common:
+  drivers:
+    - apator162
+
+wmbus_radio:
+  id: radio_component
+  radio_type: SX1276
+  cs_pin: GPIO3
+  reset_pin: GPIO4
+  irq_pin: GPIO5
+  on_apator_programming_result:
+    - logger.log:
+        format: "Apator result=%s requested=%u read=%u"
+        args: [ 'result.c_str()', 'desired_period', 'actual_period' ]
+
+button:
+  - platform: template
+    name: "Arm Apator test period"
+    on_press:
+      - wmbus_radio.apator_set_period:
+          id: radio_component
+          meter_id: "12345678"
+          period: 60
+          attempts: 3
+          power_dbm: 10
