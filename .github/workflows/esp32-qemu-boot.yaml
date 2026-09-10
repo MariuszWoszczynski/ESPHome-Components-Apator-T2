@@ -18,24 +18,29 @@ jobs:
           python-version: '3.12'
 
       - name: Install ESPHome
-        run: pip install esphome
+        run: pip install esphome==2026.8.2
 
       - name: Build hardware-matching ESP32 firmware
         run: esphome compile tests/boot_sim.yaml
 
-      - name: Locate merged flash image
+      - name: Locate and prepare merged flash image
         id: image
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="$(find .esphome/build -type f \( -name 'firmware.factory.bin' -o -name 'firmware-factory.bin' \) | head -n1)"
+          IMAGE="$(find tests/.esphome/build -type f -name 'firmware.factory.bin' | head -n1)"
           if [ -z "$IMAGE" ]; then
             echo "Merged ESP32 factory image not found"
-            find .esphome/build -type f -name '*.bin' -print
+            find tests/.esphome/build -type f -name '*.bin' -print || true
             exit 1
           fi
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          ls -lh "$IMAGE"
+
+          # nodemcu-32s uses a 4 MiB SPI flash. Espressif QEMU requires the
+          # emulated flash file to have the configured flash size exactly.
+          cp "$IMAGE" qemu_flash.bin
+          truncate -s 4M qemu_flash.bin
+          echo "image=$GITHUB_WORKSPACE/qemu_flash.bin" >> "$GITHUB_OUTPUT"
+          ls -lh "$IMAGE" qemu_flash.bin
 
       - name: Install Espressif QEMU dependencies
         run: sudo apt-get update && sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0 xz-utils
@@ -46,6 +51,7 @@ jobs:
           set -euo pipefail
           QEMU_URL="https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz"
           curl -fL "$QEMU_URL" -o /tmp/qemu.tar.xz
+          echo "0eecb2a34a5586c0e59110f77b9343b7b336e82fdb0e1a30e1dc1bab8a547e35  /tmp/qemu.tar.xz" | sha256sum -c -
           mkdir -p "$HOME/qemu-xtensa"
           tar -xJf /tmp/qemu.tar.xz -C "$HOME/qemu-xtensa" --strip-components=1
           find "$HOME/qemu-xtensa" -type f -name qemu-system-xtensa -print
