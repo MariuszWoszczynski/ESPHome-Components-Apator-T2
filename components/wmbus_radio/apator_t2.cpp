@@ -179,8 +179,8 @@ bool build_apator_period_read_frame(const std::string &meter_id, uint8_t version
   return build_apator_frame_(meter_id, version, device_type, aes_key_hex, 0x01, {0xB0}, result);
 }
 
-ApatorT2Reply parse_apator_t2_reply(const std::vector<uint8_t> &frame,
-                                    const std::array<uint8_t, 4> &meter_id_bcd, const std::string &aes_key_hex) {
+ApatorT2Reply parse_apator_t2_reply(const std::vector<uint8_t> &frame, const std::array<uint8_t, 4> &meter_id_bcd,
+                                    const std::string &aes_key_hex) {
   ApatorT2Reply result;
   if (frame.size() < 10 || static_cast<size_t>(frame[0]) + 1 != frame.size())
     return result;
@@ -230,9 +230,8 @@ ApatorT2Reply parse_apator_t2_reply(const std::vector<uint8_t> &frame,
 }
 
 const char *apator_error_to_string(uint8_t error_code) {
-  static const char *const ERRORS[] = {"OK",          "wrong PIN",      "wrong instruction",
-                                      "wrong register", "wrong data size", "wrong CRC",
-                                      "too many parameters"};
+  static const char *const ERRORS[] = {
+      "OK", "wrong PIN", "wrong instruction", "wrong register", "wrong data size", "wrong CRC", "too many parameters"};
   return error_code < sizeof(ERRORS) / sizeof(ERRORS[0]) ? ERRORS[error_code] : "unknown error";
 }
 

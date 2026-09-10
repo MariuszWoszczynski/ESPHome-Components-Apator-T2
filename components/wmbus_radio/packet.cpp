@@ -242,16 +242,14 @@ bool Packet::decode_t1_format_a(std::vector<uint8_t> *frame) const {
   size_t physical_offset = 0;
   size_t logical_offset = 0;
   while (logical_offset < logical_size) {
-    const size_t block_size = std::min(logical_offset == 0 ? (size_t) 10 : (size_t) 16,
-                                       logical_size - logical_offset);
+    const size_t block_size = std::min(logical_offset == 0 ? (size_t) 10 : (size_t) 16, logical_size - logical_offset);
     const uint16_t expected_crc = crc16_en13757_(physical.data() + physical_offset, block_size);
     if (physical[physical_offset + block_size] != (expected_crc >> 8) ||
         physical[physical_offset + block_size + 1] != (expected_crc & 0xFF)) {
       frame->clear();
       return false;
     }
-    frame->insert(frame->end(), physical.begin() + physical_offset,
-                  physical.begin() + physical_offset + block_size);
+    frame->insert(frame->end(), physical.begin() + physical_offset, physical.begin() + physical_offset + block_size);
     physical_offset += block_size + 2;
     logical_offset += block_size;
   }

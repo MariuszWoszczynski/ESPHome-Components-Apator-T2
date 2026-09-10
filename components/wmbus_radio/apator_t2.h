@@ -33,8 +33,8 @@ bool build_apator_period_read_frame(const std::string &meter_id, uint8_t version
                                     const std::string &aes_key_hex, ApatorT2Frame *result);
 
 // Parses a CRC-checked, decoded format-A link frame from an AT-WMBUS-16-1.
-ApatorT2Reply parse_apator_t2_reply(const std::vector<uint8_t> &frame,
-                                    const std::array<uint8_t, 4> &meter_id_bcd, const std::string &aes_key_hex);
+ApatorT2Reply parse_apator_t2_reply(const std::vector<uint8_t> &frame, const std::array<uint8_t, 4> &meter_id_bcd,
+                                    const std::string &aes_key_hex);
 
 const char *apator_error_to_string(uint8_t error_code);
 

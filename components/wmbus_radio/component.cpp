@@ -109,8 +109,7 @@ void Radio::receive_frame() {
     return;
   }
 
-  if (this->pending_command_ != nullptr &&
-      packet->matches_meter_id(this->pending_command_->write_frame.meter_id_bcd)) {
+  if (this->pending_command_ != nullptr && packet->matches_meter_id(this->pending_command_->write_frame.meter_id_bcd)) {
     ESP_LOGI(TAG, "Target Apator telegram received; replying in the T2 window");
     // T2 specifies a 2 ms minimum acknowledgement delay after the uplink.
     delay_microseconds_safe(2000);
@@ -176,10 +175,9 @@ void Radio::transmit_pending_command_() {
     }
     if (!is_write && reply.type == ApatorReplyType::PERIOD_READ) {
       const uint16_t actual = reply.periods_seconds[0];
-      const bool all_match = std::all_of(reply.periods_seconds.begin(), reply.periods_seconds.end(),
-                                         [this](uint16_t value) {
-                                           return value == this->pending_command_->desired_period_seconds;
-                                         });
+      const bool all_match =
+          std::all_of(reply.periods_seconds.begin(), reply.periods_seconds.end(),
+                      [this](uint16_t value) { return value == this->pending_command_->desired_period_seconds; });
       if (all_match) {
         ESP_LOGI(TAG, "Apator register 0xB0 verified: %u seconds", actual);
         this->finish_command_("verified", actual);
@@ -246,8 +244,7 @@ bool Radio::arm_apator_period(const std::string &meter_id, uint16_t period_secon
   command->attempts_left = attempts;
   command->power_dbm = power_dbm;
   if (attempts == 0 ||
-      !build_apator_period_frame(meter_id, period_seconds, version, device_type, aes_key_hex,
-                                 &command->write_frame) ||
+      !build_apator_period_frame(meter_id, period_seconds, version, device_type, aes_key_hex, &command->write_frame) ||
       !build_apator_period_read_frame(meter_id, version, device_type, aes_key_hex, &command->read_frame)) {
     delete command;
     ESP_LOGE(TAG, "Invalid Apator T2 command parameters");
