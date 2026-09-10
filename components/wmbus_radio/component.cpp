@@ -1,5 +1,7 @@
 #include "component.h"
 
+#include <algorithm>
+
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
@@ -24,6 +26,7 @@ static const char *TAG = "wmbus";
 void Radio::setup() {
   ASSERT_SETUP(this->packet_queue_ = xQueueCreate(3, sizeof(Packet *)));
   ASSERT_SETUP(this->command_queue_ = xQueueCreate(3, sizeof(PendingCommand *)));
+  ASSERT_SETUP(this->result_queue_ = xQueueCreate(3, sizeof(ProgrammingResult *)));
 
   ASSERT_SETUP(xTaskCreate((TaskFunction_t) this->receiver_task, "radio_recv", 3 * 1024, this, 2,
                            &(this->receiver_task_handle_)));
@@ -34,6 +37,12 @@ void Radio::setup() {
 }
 
 void Radio::loop() {
+  ProgrammingResult *result;
+  while (xQueueReceive(this->result_queue_, &result, 0) == pdPASS) {
+    this->on_apator_result_callback_manager_.call(result->result, result->desired_period, result->actual_period);
+    delete result;
+  }
+
   Packet *p;
   if (xQueueReceive(this->packet_queue_, &p, 0) != pdPASS)
     return;
@@ -76,7 +85,9 @@ void Radio::receive_frame() {
   if (this->accept_armed_command_())
     return;
 
-  if (!this->radio->read(packet->rx_data_ptr(), packet->rx_capacity())) {
+  size_t rx_length;
+  uint8_t *rx_buffer = packet->prepare_rx_buffer(&rx_length);
+  if (!this->radio->read(rx_buffer, rx_length)) {
     ESP_LOGV(TAG, "Failed to read preamble");
     return;
   }
@@ -92,12 +103,14 @@ void Radio::receive_frame() {
 
   packet->set_rssi(this->radio->get_rssi());
 
-  if (!this->radio->read(packet->rx_data_ptr(), packet->rx_capacity())) {
+  rx_buffer = packet->prepare_rx_buffer(&rx_length);
+  if (!this->radio->read(rx_buffer, rx_length)) {
     ESP_LOGW(TAG, "Failed to read data");
     return;
   }
 
-  if (this->pending_command_ != nullptr && packet->matches_meter_id(this->pending_command_->frame.meter_id_bcd)) {
+  if (this->pending_command_ != nullptr &&
+      packet->matches_meter_id(this->pending_command_->write_frame.meter_id_bcd)) {
     ESP_LOGI(TAG, "Target Apator telegram received; replying in the T2 window");
     // T2 specifies a 2 ms minimum acknowledgement delay after the uplink.
     delay_microseconds_safe(2000);
@@ -129,28 +142,113 @@ bool Radio::accept_armed_command_() {
 void Radio::transmit_pending_command_() {
   if (this->pending_command_ == nullptr)
     return;
-  const bool sent =
-      this->radio->transmit_t2(this->pending_command_->frame.radio_payload, this->pending_command_->power_dbm);
-  if (sent && this->pending_command_->attempts_left > 0)
+  const bool is_write = this->pending_command_->stage == PendingCommand::Stage::WRITE;
+  const auto &tx_frame = is_write ? this->pending_command_->write_frame : this->pending_command_->read_frame;
+  if (!this->radio->transmit_t2(tx_frame.radio_payload, this->pending_command_->power_dbm)) {
+    this->command_failed_("radio_error");
+    return;
+  }
+
+  const uint32_t started = millis();
+  while (millis() - started < 500) {
+    const TickType_t remaining = pdMS_TO_TICKS(500 - (millis() - started));
+    auto response = this->receive_response_packet_(remaining);
+    if (!response)
+      break;
+    std::vector<uint8_t> logical_frame;
+    if (!response->decode_t1_format_a(&logical_frame)) {
+      ESP_LOGW(TAG, "Ignoring Apator response with invalid 3-of-6 coding or DLL CRC");
+      continue;
+    }
+    const auto reply = parse_apator_t2_reply(logical_frame, this->pending_command_->write_frame.meter_id_bcd,
+                                             this->pending_command_->aes_key_hex);
+    if (reply.type == ApatorReplyType::NOT_FOR_US)
+      continue;
+    if (is_write && reply.type == ApatorReplyType::WRITE_ACK) {
+      if (reply.error_code != 0) {
+        ESP_LOGE(TAG, "Apator rejected write: %s (%u)", apator_error_to_string(reply.error_code), reply.error_code);
+        this->finish_command_(std::string("overlay_error_") + apator_error_to_string(reply.error_code));
+        return;
+      }
+      ESP_LOGI(TAG, "Apator accepted register 0xB0 write; readback armed for the next meter telegram");
+      this->pending_command_->stage = PendingCommand::Stage::VERIFY;
+      return;
+    }
+    if (!is_write && reply.type == ApatorReplyType::PERIOD_READ) {
+      const uint16_t actual = reply.periods_seconds[0];
+      const bool all_match = std::all_of(reply.periods_seconds.begin(), reply.periods_seconds.end(),
+                                         [this](uint16_t value) {
+                                           return value == this->pending_command_->desired_period_seconds;
+                                         });
+      if (all_match) {
+        ESP_LOGI(TAG, "Apator register 0xB0 verified: %u seconds", actual);
+        this->finish_command_("verified", actual);
+      } else {
+        ESP_LOGE(TAG, "Apator register 0xB0 readback differs (normal period: %u seconds)", actual);
+        this->finish_command_("readback_mismatch", actual);
+      }
+      return;
+    }
+    ESP_LOGW(TAG, "Received an unexpected Apator response while waiting for %s", is_write ? "write ACK" : "readback");
+  }
+
+  this->command_failed_(is_write ? "write_ack_timeout" : "readback_timeout");
+}
+
+std::unique_ptr<Packet> Radio::receive_response_packet_(TickType_t timeout) {
+  if (!ulTaskNotifyTake(pdTRUE, timeout))
+    return nullptr;
+  auto packet = std::make_unique<Packet>();
+  size_t rx_length;
+  uint8_t *rx_buffer = packet->prepare_rx_buffer(&rx_length);
+  if (!this->radio->read(rx_buffer, rx_length) || !packet->validate_preamble() || !packet->calculate_payload_size())
+    return nullptr;
+  packet->set_rssi(this->radio->get_rssi());
+  rx_buffer = packet->prepare_rx_buffer(&rx_length);
+  if (!this->radio->read(rx_buffer, rx_length))
+    return nullptr;
+  return packet;
+}
+
+void Radio::command_failed_(const char *reason) {
+  if (this->pending_command_ == nullptr)
+    return;
+  if (this->pending_command_->attempts_left > 0)
     this->pending_command_->attempts_left--;
-  if (!sent || this->pending_command_->attempts_left == 0) {
-    ESP_LOGI(TAG, "Apator T2 command finished (%s)", sent ? "attempt limit reached" : "radio error");
-    delete this->pending_command_;
-    this->pending_command_ = nullptr;
+  if (this->pending_command_->attempts_left == 0) {
+    ESP_LOGE(TAG, "Apator transaction failed: %s", reason);
+    this->finish_command_(reason);
   } else {
-    ESP_LOGI(TAG, "Apator T2 command remains armed for %u more matching telegram(s)",
+    ESP_LOGW(TAG, "Apator %s; retry armed for %u more target telegram(s)", reason,
              this->pending_command_->attempts_left);
   }
+}
+
+void Radio::finish_command_(const std::string &result, uint16_t actual_period) {
+  if (this->pending_command_ == nullptr)
+    return;
+  const uint16_t desired = this->pending_command_->desired_period_seconds;
+  auto *queued_result = new ProgrammingResult{result, desired, actual_period};
+  if (xQueueSend(this->result_queue_, &queued_result, 0) != pdTRUE) {
+    ESP_LOGW(TAG, "Apator result queue is full");
+    delete queued_result;
+  }
+  delete this->pending_command_;
+  this->pending_command_ = nullptr;
 }
 
 bool Radio::arm_apator_period(const std::string &meter_id, uint16_t period_seconds, uint8_t version,
                               uint8_t device_type, const std::string &aes_key_hex, uint8_t attempts,
                               uint8_t power_dbm) {
   auto *command = new PendingCommand();
+  command->desired_period_seconds = period_seconds;
+  command->aes_key_hex = aes_key_hex;
   command->attempts_left = attempts;
   command->power_dbm = power_dbm;
   if (attempts == 0 ||
-      !build_apator_period_frame(meter_id, period_seconds, version, device_type, aes_key_hex, &command->frame)) {
+      !build_apator_period_frame(meter_id, period_seconds, version, device_type, aes_key_hex,
+                                 &command->write_frame) ||
+      !build_apator_period_read_frame(meter_id, version, device_type, aes_key_hex, &command->read_frame)) {
     delete command;
     ESP_LOGE(TAG, "Invalid Apator T2 command parameters");
     return false;
@@ -177,6 +275,10 @@ void Radio::add_frame_handler(std::function<void(Frame *)> &&callback) {
 
 void Radio::on_packet(std::function<void(Packet *)> &&callback) {
   this->on_packet_callback_manager.add(std::move(callback));
+}
+
+void Radio::on_apator_result(std::function<void(std::string, uint16_t, uint16_t)> &&callback) {
+  this->on_apator_result_callback_manager_.add(std::move(callback));
 }
 
 }  // namespace wmbus_radio

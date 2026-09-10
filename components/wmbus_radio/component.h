@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 
 #include "freertos/FreeRTOS.h"
 
@@ -26,6 +27,7 @@ class Radio : public Component {
 
   void add_frame_handler(std::function<void(Frame *)> &&callback);
   void on_packet(std::function<void(Packet *)> &&callback);
+  void on_apator_result(std::function<void(std::string, uint16_t, uint16_t)> &&callback);
   bool arm_apator_period(const std::string &meter_id, uint16_t period_seconds, uint8_t version, uint8_t device_type,
                          const std::string &aes_key_hex, uint8_t attempts, uint8_t power_dbm);
 
@@ -37,20 +39,35 @@ class Radio : public Component {
   TaskHandle_t receiver_task_handle_{nullptr};
   QueueHandle_t packet_queue_{nullptr};
   QueueHandle_t command_queue_{nullptr};
+  QueueHandle_t result_queue_{nullptr};
 
   struct PendingCommand {
-    ApatorT2Frame frame;
+    enum class Stage : uint8_t { WRITE, VERIFY } stage{Stage::WRITE};
+    ApatorT2Frame write_frame;
+    ApatorT2Frame read_frame;
+    std::string aes_key_hex;
+    uint16_t desired_period_seconds;
     uint8_t attempts_left;
     uint8_t power_dbm;
   };
   PendingCommand *pending_command_{nullptr};
 
+  struct ProgrammingResult {
+    std::string result;
+    uint16_t desired_period;
+    uint16_t actual_period;
+  };
+
   bool accept_armed_command_();
   void transmit_pending_command_();
+  std::unique_ptr<Packet> receive_response_packet_(TickType_t timeout);
+  void command_failed_(const char *reason);
+  void finish_command_(const std::string &result, uint16_t actual_period = 0);
 
   std::vector<std::function<void(Frame *)>> frame_handlers_;
 
   CallbackManager<void(Packet *)> on_packet_callback_manager;
+  CallbackManager<void(std::string, uint16_t, uint16_t)> on_apator_result_callback_manager_;
 };
 }  // namespace wmbus_radio
 }  // namespace esphome

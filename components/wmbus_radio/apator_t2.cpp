@@ -106,22 +106,17 @@ static std::vector<uint8_t> manchester_encode_(const std::vector<uint8_t> &data)
   return result;
 }
 
-bool build_apator_period_frame(const std::string &meter_id, uint16_t period_seconds, uint8_t version,
-                               uint8_t device_type, const std::string &aes_key_hex, ApatorT2Frame *result) {
-  if (result == nullptr || period_seconds < 10 || period_seconds > 2550 || period_seconds % 10 != 0)
+static bool build_apator_frame_(const std::string &meter_id, uint8_t version, uint8_t device_type,
+                                const std::string &aes_key_hex, uint8_t overlay_instruction,
+                                const std::vector<uint8_t> &register_data, ApatorT2Frame *result) {
+  if (result == nullptr)
     return false;
 
   std::array<uint8_t, 16> key{};
   if (!parse_meter_id_(meter_id, &result->meter_id_bcd) || !parse_key_(aes_key_hex, &key))
     return false;
 
-  const uint8_t period = period_seconds / 10;
-  // AT-WMBUS-16-1 register 0xB0: normal, economy-hour, economy-weekday,
-  // economy-month-day and economy-month periods, each in units of 10 seconds.
-  const std::vector<uint8_t> register_data = {0x00,   0xFF,   0xFF,   0x00,   0xB0,  0x05,
-                                              period, period, period, period, period};
-
-  std::vector<uint8_t> command = {0x0F, 0x00, 0x00, 0x00, 0x00, 0x02};  // write overlay
+  std::vector<uint8_t> command = {0x0F, 0x00, 0x00, 0x00, 0x00, overlay_instruction};
   command.insert(command.end(), register_data.begin(), register_data.end());
   const size_t padding = (16 - ((register_data.size() + 10) % 16)) % 16;
   command.insert(command.end(), padding, 0xFF);
@@ -132,7 +127,6 @@ bool build_apator_period_frame(const std::string &meter_id, uint16_t period_seco
   std::vector<uint8_t> cleartext = {0x2F, 0x2F};
   cleartext.insert(cleartext.end(), command.begin(), command.end());
 
-  // APA manufacturer code is 0x0601, low byte first on air.
   const uint8_t manufacturer_low = 0x01;
   const uint8_t manufacturer_high = 0x06;
   uint8_t iv[16] = {manufacturer_low, manufacturer_high, 0, 0, 0, 0, version, device_type, 1, 1, 1, 1, 1, 1, 1, 1};
@@ -143,14 +137,14 @@ bool build_apator_period_frame(const std::string &meter_id, uint16_t period_seco
 
   std::vector<uint8_t> frame(23 + encrypted.size());
   frame[0] = frame.size() - 1;
-  frame[1] = 0x5B;  // REQ_UD2, as used by inkaSOID for AT-WMBUS-16-1 writes
+  frame[1] = 0x5B;
   frame[2] = manufacturer_low;
   frame[3] = manufacturer_high;
-  frame[4] = 0x46;  // inkaSOID/programmer source address
+  frame[4] = 0x46;
   frame[5] = frame[6] = frame[7] = 0x00;
   frame[8] = 0x02;
   frame[9] = 0x03;
-  frame[10] = 0x5B;  // long transport-layer header
+  frame[10] = 0x5B;
   std::copy(result->meter_id_bcd.begin(), result->meter_id_bcd.end(), frame.begin() + 11);
   frame[15] = manufacturer_low;
   frame[16] = manufacturer_high;
@@ -159,11 +153,87 @@ bool build_apator_period_frame(const std::string &meter_id, uint16_t period_seco
   frame[19] = 0x01;
   frame[20] = 0x00;
   frame[21] = (cleartext.size() / 16) << 4;
-  frame[22] = 0x05;  // AES-CBC mode 5
+  frame[22] = 0x05;
   std::copy(encrypted.begin(), encrypted.end(), frame.begin() + 23);
 
   result->radio_payload = manchester_encode_(add_format_a_crcs_(frame));
   return true;
+}
+
+bool build_apator_period_frame(const std::string &meter_id, uint16_t period_seconds, uint8_t version,
+                               uint8_t device_type, const std::string &aes_key_hex, ApatorT2Frame *result) {
+  if (result == nullptr || period_seconds < 10 || period_seconds > 2550 || period_seconds % 10 != 0)
+    return false;
+
+  const uint8_t period = period_seconds / 10;
+  // AT-WMBUS-16-1 register 0xB0: normal, economy-hour, economy-weekday,
+  // economy-month-day and economy-month periods, each in units of 10 seconds.
+  const std::vector<uint8_t> register_data = {0x00,   0xFF,   0xFF,   0x00,   0xB0,  0x05,
+                                              period, period, period, period, period};
+
+  return build_apator_frame_(meter_id, version, device_type, aes_key_hex, 0x02, register_data, result);
+}
+
+bool build_apator_period_read_frame(const std::string &meter_id, uint8_t version, uint8_t device_type,
+                                    const std::string &aes_key_hex, ApatorT2Frame *result) {
+  return build_apator_frame_(meter_id, version, device_type, aes_key_hex, 0x01, {0xB0}, result);
+}
+
+ApatorT2Reply parse_apator_t2_reply(const std::vector<uint8_t> &frame,
+                                    const std::array<uint8_t, 4> &meter_id_bcd, const std::string &aes_key_hex) {
+  ApatorT2Reply result;
+  if (frame.size() < 10 || static_cast<size_t>(frame[0]) + 1 != frame.size())
+    return result;
+  if (frame[2] != 0x01 || frame[3] != 0x06 ||
+      !std::equal(meter_id_bcd.begin(), meter_id_bcd.end(), frame.begin() + 4)) {
+    result.type = ApatorReplyType::NOT_FOR_US;
+    return result;
+  }
+
+  if (frame[1] == 0x00) {
+    if (frame.size() <= 20)
+      return result;
+    const uint8_t status = frame[20];
+    if ((status & 0x0F) != 0x02)
+      return result;
+    result.type = ApatorReplyType::WRITE_ACK;
+    result.error_code = (status >> 4) & 0x07;
+    return result;
+  }
+
+  if (frame[1] != 0x08 || frame.size() < 31 || (frame.size() - 15) % 16 != 0)
+    return result;
+
+  std::array<uint8_t, 16> key{};
+  if (!parse_key_(aes_key_hex, &key))
+    return result;
+  uint8_t iv[16];
+  std::copy(frame.begin() + 2, frame.begin() + 10, iv);
+  std::fill(iv + 8, iv + 16, frame[11]);
+  std::vector<uint8_t> cleartext(frame.size() - 15);
+  AES_CBC_decrypt_buffer(cleartext.data(), const_cast<uint8_t *>(frame.data() + 15), cleartext.size(), key.data(), iv);
+  if (cleartext.size() < 16 || cleartext[0] != 0x2F || cleartext[1] != 0x2F || cleartext[2] != 0x0F)
+    return result;
+
+  // AT-WMBUS-16-1 responses contain seven fixed bytes after DIF 0x0F,
+  // followed by register id and its value (without a length byte).
+  for (size_t offset = 10; offset + 5 < cleartext.size(); offset++) {
+    if (cleartext[offset] != 0xB0)
+      continue;
+    result.type = ApatorReplyType::PERIOD_READ;
+    result.error_code = 0;
+    for (size_t i = 0; i < result.periods_seconds.size(); i++)
+      result.periods_seconds[i] = cleartext[offset + 1 + i] * 10;
+    return result;
+  }
+  return result;
+}
+
+const char *apator_error_to_string(uint8_t error_code) {
+  static const char *const ERRORS[] = {"OK",          "wrong PIN",      "wrong instruction",
+                                      "wrong register", "wrong data size", "wrong CRC",
+                                      "too many parameters"};
+  return error_code < sizeof(ERRORS) / sizeof(ERRORS[0]) ? ERRORS[error_code] : "unknown error";
 }
 
 }  // namespace wmbus_radio

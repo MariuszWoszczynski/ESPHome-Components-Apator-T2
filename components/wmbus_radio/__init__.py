@@ -35,6 +35,8 @@ CONF_DEVICE_TYPE = "device_type"
 CONF_AES_KEY = "aes_key"
 CONF_ATTEMPTS = "attempts"
 CONF_POWER_DBM = "power_dbm"
+CONF_ON_APATOR_PROGRAMMING_RESULT = "on_apator_programming_result"
+CONF_APATOR_RESULT_TRIGGER_ID = "apator_result_trigger_id"
 
 radio_ns = cg.esphome_ns.namespace("wmbus_radio")
 RadioComponent = radio_ns.class_("Radio", cg.Component)
@@ -48,6 +50,10 @@ Packet = radio_ns.class_("Packet")
 PacketPtr = Packet.operator("ptr")
 PacketTrigger = radio_ns.class_("PacketTrigger", automation.Trigger.template(PacketPtr))
 ApatorSetPeriodAction = radio_ns.class_("ApatorSetPeriodAction", automation.Action)
+ApatorProgrammingResultTrigger = radio_ns.class_(
+    "ApatorProgrammingResultTrigger",
+    automation.Trigger.template(cg.std_string, cg.uint16, cg.uint16),
+)
 
 TRANSCEIVER_NAMES = {
     r.stem.removeprefix("transceiver_").upper()
@@ -72,6 +78,13 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_ON_PACKET): automation.validate_automation(
                 {
                     cv.GenerateID(CONF_PACKET_TRIGGER_ID): cv.declare_id(PacketTrigger),
+                }
+            ),
+            cv.Optional(CONF_ON_APATOR_PROGRAMMING_RESULT): automation.validate_automation(
+                {
+                    cv.GenerateID(CONF_APATOR_RESULT_TRIGGER_ID): cv.declare_id(
+                        ApatorProgrammingResultTrigger
+                    ),
                 }
             ),
         }
@@ -117,6 +130,18 @@ async def to_code(config):
         await automation.build_automation(
             trig,
             [(PacketPtr, "packet")],
+            conf,
+        )
+
+    for conf in config.get(CONF_ON_APATOR_PROGRAMMING_RESULT, []):
+        trig = cg.new_Pvariable(conf[CONF_APATOR_RESULT_TRIGGER_ID], var)
+        await automation.build_automation(
+            trig,
+            [
+                (cg.std_string, "result"),
+                (cg.uint16, "desired_period"),
+                (cg.uint16, "actual_period"),
+            ],
             conf,
         )
 

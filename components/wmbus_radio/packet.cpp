@@ -128,14 +128,12 @@ size_t Packet::expected_size() {
   return this->expected_size_;
 }
 
-size_t Packet::rx_capacity() {
-  // TODO: Remove side effects?
-  auto cap = this->data_.capacity() - this->data_.size();
+uint8_t *Packet::prepare_rx_buffer(size_t *length) {
+  const size_t old_size = this->data_.size();
+  *length = this->data_.capacity() - old_size;
   this->data_.resize(this->data_.capacity());
-  return cap;
+  return this->data_.data() + old_size;
 }
-
-uint8_t *Packet::rx_data_ptr() { return this->data_.data() + this->data_.size(); }
 
 bool Packet::calculate_payload_size() {
   auto total_length = this->expected_size();
@@ -203,15 +201,61 @@ std::optional<Frame> Packet::convert_to_frame() {
 const std::vector<uint8_t> &Packet::get_raw_data() const { return data_; }
 
 bool Packet::matches_meter_id(const std::array<uint8_t, 4> &meter_id_bcd) const {
-  if (this->link_mode_ != LinkMode::T1)
+  std::vector<uint8_t> frame;
+  if (!this->decode_t1_format_a(&frame))
     return false;
-  auto raw = this->data_;
-  auto decoded = decode3of6(raw);
-  if (!decoded)
-    return false;
-  auto frame = decoded.value();
-  removeAnyDLLCRCs(frame);
   return frame.size() >= 10 && std::equal(meter_id_bcd.begin(), meter_id_bcd.end(), frame.begin() + 4);
+}
+
+static uint16_t crc16_en13757_(const uint8_t *data, size_t length) {
+  uint16_t crc = 0;
+  for (size_t i = 0; i < length; i++) {
+    uint8_t value = data[i];
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      if (((crc & 0x8000) >> 8) ^ (value & 0x80))
+        crc = (crc << 1) ^ 0x3D65;
+      else
+        crc <<= 1;
+      value <<= 1;
+    }
+  }
+  return ~crc;
+}
+
+bool Packet::decode_t1_format_a(std::vector<uint8_t> *frame) const {
+  if (frame == nullptr || this->link_mode_ != LinkMode::T1)
+    return false;
+  auto decoded = decode3of6(this->data_);
+  if (!decoded || decoded->empty())
+    return false;
+
+  const auto &physical = decoded.value();
+  const size_t logical_size = physical[0] + 1;
+  if (logical_size < 10)
+    return false;
+  const size_t blocks = 1 + (logical_size > 10 ? (logical_size - 10 + 15) / 16 : 0);
+  if (physical.size() != logical_size + 2 * blocks)
+    return false;
+
+  frame->clear();
+  frame->reserve(logical_size);
+  size_t physical_offset = 0;
+  size_t logical_offset = 0;
+  while (logical_offset < logical_size) {
+    const size_t block_size = std::min(logical_offset == 0 ? (size_t) 10 : (size_t) 16,
+                                       logical_size - logical_offset);
+    const uint16_t expected_crc = crc16_en13757_(physical.data() + physical_offset, block_size);
+    if (physical[physical_offset + block_size] != (expected_crc >> 8) ||
+        physical[physical_offset + block_size + 1] != (expected_crc & 0xFF)) {
+      frame->clear();
+      return false;
+    }
+    frame->insert(frame->end(), physical.begin() + physical_offset,
+                  physical.begin() + physical_offset + block_size);
+    physical_offset += block_size + 2;
+    logical_offset += block_size;
+  }
+  return true;
 }
 
 Frame::Frame(Packet *packet)

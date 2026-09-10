@@ -162,6 +162,11 @@ wmbus_radio:
   cs_pin: GPIO3
   reset_pin: GPIO4
   irq_pin: GPIO5
+  on_apator_programming_result:
+    then:
+      - logger.log:
+          format: "Apator result=%s, requested=%u s, read=%u s"
+          args: [ 'result.c_str()', 'desired_period', 'actual_period' ]
 
 button:
   - platform: template
@@ -179,11 +184,17 @@ button:
 ```
 
 `period` is written to all five profiles: normal, economy hours, economy days
-of week, economy days of month and economy months. The action is experimental:
-first test it on an overlay you own and whose current configuration has been
-recorded. The code logs when the command is armed, when the matching uplink is
-seen and whether the downlink completed at the radio level. A completed radio
-transmission does not by itself prove that the overlay accepted the setting.
+of week, economy days of month and economy months. After the write, the component
+requires the overlay's positive acknowledgement. On the next matching uplink it
+reads register `0xB0` back and reports `verified` only when all five returned
+periods equal the requested value. Timeouts retry the current stage; an explicit
+overlay error or a readback mismatch ends the transaction.
+
+`on_apator_programming_result` exposes `result`, `desired_period` and
+`actual_period` to ESPHome automations. Possible final results include `verified`,
+`write_ack_timeout`, `readback_timeout`, `readback_mismatch`, `radio_error` and
+`overlay_error_*`. Keep the device close during the first test and record its
+current configuration.
 
 The defaults target hardware type `7`, software version `5` and use an all-zero
 AES key. Override `device_type`, `version` or `aes_key` only when the values on

@@ -193,7 +193,13 @@ bool SX1276::transmit_t2(const std::vector<uint8_t> &payload, uint8_t power_dbm)
   this->spi_write(0x01, (uint8_t) 0b001);  // standby before restoring RX
   for (size_t i = 0; i < sizeof(SAVED_REGISTERS); i++)
     this->spi_write(SAVED_REGISTERS[i], saved[i]);
-  this->restart_rx();
+
+  // Do not call restart_rx() here: its settling delays would make us deaf
+  // during the overlay's immediate T2 response.  Clear TX notifications/FIFO
+  // while still in standby and enter the restored receiver directly.
+  this->spi_write(0x3F, (uint8_t) 0x10);
+  ulTaskNotifyTake(pdTRUE, 0);
+  this->spi_write(0x01, (uint8_t) 0b101);
 
   if (ok)
     ESP_LOGI(TAG, "T2 telegram sent (%zu Manchester bytes, %u dBm)", payload.size(), power_dbm);

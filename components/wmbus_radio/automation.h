@@ -24,6 +24,15 @@ class PacketTrigger : public Trigger<Packet *> {
   }
 };
 
+class ApatorProgrammingResultTrigger : public Trigger<std::string, uint16_t, uint16_t> {
+ public:
+  explicit ApatorProgrammingResultTrigger(wmbus_radio::Radio *radio) {
+    radio->on_apator_result([this](std::string result, uint16_t desired, uint16_t actual) {
+      this->trigger(result, desired, actual);
+    });
+  }
+};
+
 template<typename... Ts> class ApatorSetPeriodAction : public Action<Ts...> {
  public:
   explicit ApatorSetPeriodAction(Radio *parent) : parent_(parent) {}

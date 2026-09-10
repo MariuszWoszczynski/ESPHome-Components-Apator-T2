@@ -4,13 +4,26 @@ This document records the wire format reconstructed from inkaSOID 1.50.1. It
 has a deterministic host-side test vector, but has not yet been confirmed with
 an AT-WMBUS-16-1 overlay. Treat it as experimental.
 
-## Transmission sequence
+## Transaction sequence
 
 The command is prepared and armed first. The radio remains in T1 receive mode
 until it receives an uplink whose link-layer ID matches the selected overlay.
 It then switches to the T2 other-to-meter PHY and sends the command after the
 minimum response delay. This timing requirement means that periodically sending
 the command without observing the overlay first is not equivalent.
+
+Programming is not considered successful merely because the SX1276 completed
+TX. The implementation follows the inkaSOID transaction:
+
+1. wait for the selected overlay's normal T1 uplink;
+2. send the write request in its T2 response window;
+3. return directly to T1 RX and validate the overlay's write acknowledgement;
+4. wait for the overlay's next normal T1 uplink;
+5. send a read request for register `0xB0`;
+6. decrypt the response and compare all five periods with the requested value.
+
+Timeouts retry the current stage on a later matching uplink. An explicit error
+from the overlay and a readback mismatch end the transaction immediately.
 
 ## Period register
 
@@ -47,6 +60,37 @@ where `PP = period_seconds / 10`.
 - AES IV consists of target manufacturer, target ID, version, device type and
   eight bytes of `0x01`.
 - Format-A CRCs are inserted before Manchester encoding.
+
+The read request uses the same envelope with overlay instruction `0x01` and a
+single data byte `B0`. The write instruction is `0x02`.
+
+## Responses
+
+Both response types are received as T1 format-A frames. Every data-link CRC and
+the Apator manufacturer/ID are checked before a response is accepted.
+
+The write acknowledgement has C-field `0x00`. Its logical byte 20 encodes the
+operation in the low nibble (`2` means write) and the error in bits 4..6:
+
+| Error | Meaning recovered from inkaSOID |
+| ---: | --- |
+| 0 | OK |
+| 1 | wrong PIN |
+| 2 | wrong instruction code |
+| 3 | wrong register number |
+| 4 | wrong data amount |
+| 5 | wrong command CRC |
+| 6 | too many parameters |
+
+The read response has C-field `0x08`. Its encrypted application data starts at
+logical byte 15. The AES-CBC IV is the response M-field/A-field/version/type
+(logical bytes 2..9), followed by eight copies of the access number from byte
+11. The decrypted data starts `2F 2F 0F`; the `0xB0` value contains five bytes,
+again in units of ten seconds.
+
+After TX the SX1276 is restored to RX without the normal settling delays and
+FIFO reset sequence. This is required because that sequence would erase or
+miss the immediate response.
 
 ## T2 other-to-meter PHY
 

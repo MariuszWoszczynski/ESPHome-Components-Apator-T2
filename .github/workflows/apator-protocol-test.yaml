@@ -1,0 +1,20 @@
+name: Apator protocol tests
+
+on:
+  pull_request:
+
+jobs:
+  protocol_vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Build protocol test
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror
+          tests/apator_t2_vector_test.cpp
+          components/wmbus_radio/apator_t2.cpp
+          components/wmbus_common/aes.cc
+          -o apator_t2_vector_test
+      - name: Run protocol test
+        run: ./apator_t2_vector_test
