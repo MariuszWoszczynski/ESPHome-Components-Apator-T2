@@ -118,8 +118,8 @@ bool build_apator_period_frame(const std::string &meter_id, uint16_t period_seco
   const uint8_t period = period_seconds / 10;
   // AT-WMBUS-16-1 register 0xB0: normal, economy-hour, economy-weekday,
   // economy-month-day and economy-month periods, each in units of 10 seconds.
-  const std::vector<uint8_t> register_data = {0x00, 0xFF, 0xFF, 0x00, 0xB0, 0x05,
-                                               period, period, period, period, period};
+  const std::vector<uint8_t> register_data = {0x00,   0xFF,   0xFF,   0x00,   0xB0,  0x05,
+                                              period, period, period, period, period};
 
   std::vector<uint8_t> command = {0x0F, 0x00, 0x00, 0x00, 0x00, 0x02};  // write overlay
   command.insert(command.end(), register_data.begin(), register_data.end());
@@ -135,8 +135,7 @@ bool build_apator_period_frame(const std::string &meter_id, uint16_t period_seco
   // APA manufacturer code is 0x0601, low byte first on air.
   const uint8_t manufacturer_low = 0x01;
   const uint8_t manufacturer_high = 0x06;
-  uint8_t iv[16] = {manufacturer_low, manufacturer_high, 0, 0, 0, 0, version, device_type,
-                    1, 1, 1, 1, 1, 1, 1, 1};
+  uint8_t iv[16] = {manufacturer_low, manufacturer_high, 0, 0, 0, 0, version, device_type, 1, 1, 1, 1, 1, 1, 1, 1};
   std::copy(result->meter_id_bcd.begin(), result->meter_id_bcd.end(), iv + 2);
 
   std::vector<uint8_t> encrypted(cleartext.size());

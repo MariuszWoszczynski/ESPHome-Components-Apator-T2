@@ -80,8 +80,6 @@ void Radio::receive_frame() {
     ESP_LOGV(TAG, "Failed to read preamble");
     return;
   }
-
-
   if (!packet->validate_preamble()) {
     ESP_LOGV(TAG, "Received invalid preamble: [%s]", format_hex_pretty(packet->get_raw_data()).c_str());
     return;
@@ -131,8 +129,8 @@ bool Radio::accept_armed_command_() {
 void Radio::transmit_pending_command_() {
   if (this->pending_command_ == nullptr)
     return;
-  const bool sent = this->radio->transmit_t2(this->pending_command_->frame.radio_payload,
-                                             this->pending_command_->power_dbm);
+  const bool sent =
+      this->radio->transmit_t2(this->pending_command_->frame.radio_payload, this->pending_command_->power_dbm);
   if (sent && this->pending_command_->attempts_left > 0)
     this->pending_command_->attempts_left--;
   if (!sent || this->pending_command_->attempts_left == 0) {
@@ -151,8 +149,8 @@ bool Radio::arm_apator_period(const std::string &meter_id, uint16_t period_secon
   auto *command = new PendingCommand();
   command->attempts_left = attempts;
   command->power_dbm = power_dbm;
-  if (attempts == 0 || !build_apator_period_frame(meter_id, period_seconds, version, device_type,
-                                                  aes_key_hex, &command->frame)) {
+  if (attempts == 0 ||
+      !build_apator_period_frame(meter_id, period_seconds, version, device_type, aes_key_hex, &command->frame)) {
     delete command;
     ESP_LOGE(TAG, "Invalid Apator T2 command parameters");
     return false;

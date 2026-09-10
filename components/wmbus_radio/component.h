@@ -26,9 +26,8 @@ class Radio : public Component {
 
   void add_frame_handler(std::function<void(Frame *)> &&callback);
   void on_packet(std::function<void(Packet *)> &&callback);
-  bool arm_apator_period(const std::string &meter_id, uint16_t period_seconds, uint8_t version,
-                         uint8_t device_type, const std::string &aes_key_hex, uint8_t attempts,
-                         uint8_t power_dbm);
+  bool arm_apator_period(const std::string &meter_id, uint16_t period_seconds, uint8_t version, uint8_t device_type,
+                         const std::string &aes_key_hex, uint8_t attempts, uint8_t power_dbm);
 
  protected:
   static void wakeup_receiver_task_from_isr(TaskHandle_t *arg);

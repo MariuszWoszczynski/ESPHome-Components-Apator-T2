@@ -124,9 +124,8 @@ bool SX1276::transmit_t2(const std::vector<uint8_t> &payload, uint8_t power_dbm)
     return false;
   }
 
-  static const uint8_t SAVED_REGISTERS[] = {0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-                                             0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x30, 0x31,
-                                             0x32, 0x35, 0x40, 0x5D};
+  static const uint8_t SAVED_REGISTERS[] = {0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x25, 0x26,
+                                            0x27, 0x28, 0x29, 0x2A, 0x30, 0x31, 0x32, 0x35, 0x40, 0x5D};
   uint8_t saved[sizeof(SAVED_REGISTERS)];
 
   this->spi_write(0x01, (uint8_t) 0b001);  // standby
@@ -155,8 +154,8 @@ bool SX1276::transmit_t2(const std::vector<uint8_t> &payload, uint8_t power_dbm)
   this->spi_write(0x30, (uint8_t) 0x00);  // fixed length, raw, no hardware CRC
   this->spi_write(0x31, (uint8_t) 0x40);  // packet mode
   this->spi_write(0x32, (uint8_t) payload.size());
-  this->spi_write(0x35, (uint8_t) 0x9F);  // TxStart on non-empty FIFO, threshold 31
-  this->spi_write(0x40, (uint8_t) 0x00);  // DIO0 PacketSent, DIO1 FifoLevel
+  this->spi_write(0x35, (uint8_t) 0x9F);                      // TxStart on non-empty FIFO, threshold 31
+  this->spi_write(0x40, (uint8_t) 0x00);                      // DIO0 PacketSent, DIO1 FifoLevel
   this->spi_write(0x09, (uint8_t) (0x80 | (power_dbm - 2)));  // PA_BOOST, 2..17 dBm
 
   // Clear a possible FIFO overrun and stream in chunks.  Writing when
