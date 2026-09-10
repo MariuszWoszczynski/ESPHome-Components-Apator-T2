@@ -8,6 +8,14 @@ jobs:
   qemu_boot:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: normal
+            config: tests/boot_sim.yaml
+          - variant: asserts-off
+            config: tests/boot_sim_asserts_off.yaml
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,22 +29,19 @@ jobs:
         run: pip install esphome==2026.8.2
 
       - name: Build hardware-matching ESP32 firmware
-        run: esphome compile tests/boot_sim.yaml
+        run: esphome compile "${{ matrix.config }}"
 
       - name: Locate and prepare merged flash image
         id: image
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="$(find tests/.esphome/build -type f -name 'firmware.factory.bin' | head -n1)"
+          IMAGE="$(find tests/.esphome/build -type f -name 'firmware.factory.bin' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
           if [ -z "$IMAGE" ]; then
             echo "Merged ESP32 factory image not found"
             find tests/.esphome/build -type f -name '*.bin' -print || true
             exit 1
           fi
-
-          # nodemcu-32s uses a 4 MiB SPI flash. Espressif QEMU requires the
-          # emulated flash file to have the configured flash size exactly.
           cp "$IMAGE" qemu_flash.bin
           truncate -s 4M qemu_flash.bin
           echo "image=$GITHUB_WORKSPACE/qemu_flash.bin" >> "$GITHUB_OUTPUT"
@@ -93,6 +98,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: esp32-qemu-boot-log
+          name: esp32-qemu-boot-log-${{ matrix.variant }}
           path: qemu-boot.log
           if-no-files-found: ignore
