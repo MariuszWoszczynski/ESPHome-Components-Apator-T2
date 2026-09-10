@@ -24,29 +24,32 @@ namespace wmbus_radio {
 static const char *TAG = "wmbus";
 
 void Radio::setup() {
+  if (this->radio == nullptr) {
+    ESP_LOGE(TAG, "Radio transceiver is not configured");
+    this->mark_failed();
+    return;
+  }
+
+  // Keep the boot path identical to the proven IoTLabs receiver: only the RX
+  // packet queue and receiver task are created during component setup.  T2
+  // programming resources are allocated lazily when the action is first used.
   ASSERT_SETUP(this->packet_queue_ = xQueueCreate(3, sizeof(Packet *)));
-  ASSERT_SETUP(this->command_queue_ = xQueueCreate(3, sizeof(PendingCommand *)));
-  ASSERT_SETUP(this->result_queue_ = xQueueCreate(3, sizeof(ProgrammingResult *)));
+
+  ASSERT_SETUP(xTaskCreate((TaskFunction_t) this->receiver_task, "radio_recv", 3 * 1024, this, 2,
+                           &(this->receiver_task_handle_)));
+
+  ESP_LOGI(TAG, "Receiver task created [%p]", this->receiver_task_handle_);
+
+  this->radio->attach_data_interrupt(Radio::wakeup_receiver_task_from_isr, &(this->receiver_task_handle_));
 }
 
 void Radio::loop() {
-  if (this->receiver_task_handle_ == nullptr) {
-    if (xTaskCreate((TaskFunction_t) this->receiver_task, "radio_recv", 3 * 1024, this, 2,
-                    &(this->receiver_task_handle_)) != pdPASS) {
-      ESP_LOGE(TAG, "Failed to create receiver task");
-      this->mark_failed();
-      return;
+  if (this->result_queue_ != nullptr) {
+    ProgrammingResult *result;
+    while (xQueueReceive(this->result_queue_, &result, 0) == pdPASS) {
+      this->on_apator_result_callback_manager_.call(result->result, result->desired_period, result->actual_period);
+      delete result;
     }
-    // loop() starts only after every component has completed setup.  Attaching
-    // DIO1 here prevents the receiver task from racing the SX1276 setup.
-    this->radio->attach_data_interrupt(Radio::wakeup_receiver_task_from_isr, &(this->receiver_task_handle_));
-    ESP_LOGI(TAG, "Receiver task created [%p]", this->receiver_task_handle_);
-  }
-
-  ProgrammingResult *result;
-  while (xQueueReceive(this->result_queue_, &result, 0) == pdPASS) {
-    this->on_apator_result_callback_manager_.call(result->result, result->desired_period, result->actual_period);
-    delete result;
   }
 
   Packet *p;
@@ -63,7 +66,6 @@ void Radio::loop() {
   ESP_LOGI(TAG, "Frame created (%zu bytes) [RSSI: %d, mode:%s%s]", frame->data().size(), frame->rssi(),
            toString(frame->link_mode()), toString(frame->block_type()));
 
-  uint8_t packet_handled = 0;
   for (auto &handler : this->frame_handlers_)
     handler(&frame.value());
 
@@ -120,7 +122,6 @@ void Radio::receive_frame() {
 
   if (this->pending_command_ != nullptr && packet->matches_meter_id(this->pending_command_->write_frame.meter_id_bcd)) {
     ESP_LOGI(TAG, "Target Apator telegram received; replying in the T2 window");
-    // T2 specifies a 2 ms minimum acknowledgement delay after the uplink.
     delay_microseconds_safe(2000);
     this->transmit_pending_command_();
   }
@@ -136,6 +137,9 @@ void Radio::receive_frame() {
 }
 
 bool Radio::accept_armed_command_() {
+  if (this->command_queue_ == nullptr)
+    return false;
+
   PendingCommand *command = nullptr;
   bool accepted = false;
   while (xQueueReceive(this->command_queue_, &command, 0) == pdTRUE) {
@@ -236,8 +240,8 @@ void Radio::finish_command_(const std::string &result, uint16_t actual_period) {
     return;
   const uint16_t desired = this->pending_command_->desired_period_seconds;
   auto *queued_result = new ProgrammingResult{result, desired, actual_period};
-  if (xQueueSend(this->result_queue_, &queued_result, 0) != pdTRUE) {
-    ESP_LOGW(TAG, "Apator result queue is full");
+  if (this->result_queue_ == nullptr || xQueueSend(this->result_queue_, &queued_result, 0) != pdTRUE) {
+    ESP_LOGW(TAG, "Apator result queue is unavailable or full");
     delete queued_result;
   }
   delete this->pending_command_;
@@ -247,6 +251,23 @@ void Radio::finish_command_(const std::string &result, uint16_t actual_period) {
 bool Radio::arm_apator_period(const std::string &meter_id, uint16_t period_seconds, uint8_t version,
                               uint8_t device_type, const std::string &aes_key_hex, uint8_t attempts,
                               uint8_t power_dbm) {
+  // Do not allocate any T2-specific RTOS objects during boot.  They are needed
+  // only after the user explicitly arms programming.
+  if (this->command_queue_ == nullptr) {
+    this->command_queue_ = xQueueCreate(3, sizeof(PendingCommand *));
+    if (this->command_queue_ == nullptr) {
+      ESP_LOGE(TAG, "Failed to create Apator command queue");
+      return false;
+    }
+  }
+  if (this->result_queue_ == nullptr) {
+    this->result_queue_ = xQueueCreate(3, sizeof(ProgrammingResult *));
+    if (this->result_queue_ == nullptr) {
+      ESP_LOGE(TAG, "Failed to create Apator result queue");
+      return false;
+    }
+  }
+
   auto *command = new PendingCommand();
   command->desired_period_seconds = period_seconds;
   command->aes_key_hex = aes_key_hex;
@@ -270,10 +291,9 @@ bool Radio::arm_apator_period(const std::string &meter_id, uint16_t period_secon
 }
 
 void Radio::receiver_task(Radio *arg) {
-  // Let loop() finish attaching DIO1 before touching the transceiver.
+  // Give setup() one scheduler tick to finish attaching DIO1 before RX starts.
   vTaskDelay(1);
-  ESP_LOGE(TAG, "Hello from radio task!");
-  int counter = 0;
+  ESP_LOGI(TAG, "Hello from radio task!");
   while (true)
     arg->receive_frame();
 }
