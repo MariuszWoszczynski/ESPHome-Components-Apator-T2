@@ -93,8 +93,10 @@ void Radio::receive_frame() {
     return;
   }
 
-  if (this->accept_armed_command_())
-    return;
+  // A command may have been queued while we were blocked waiting for DIO0.
+  // Arm it now and continue reading the same telegram: this is the target T2
+  // uplink that opens the response window.
+  this->accept_armed_command_();
 
   size_t rx_length;
   uint8_t *rx_buffer = packet->prepare_rx_buffer(&rx_length);
@@ -285,8 +287,11 @@ bool Radio::arm_apator_period(const std::string &meter_id, uint16_t period_secon
     ESP_LOGE(TAG, "Apator T2 command queue is full");
     return false;
   }
-  if (this->receiver_task_handle_ != nullptr)
-    xTaskNotifyGive(this->receiver_task_handle_);
+
+  // Do not wake the receiver task here. Its notification is the SX1276 DIO0
+  // event and must never be shared with control commands. The queued command
+  // will be armed when the next real meter telegram raises DIO0.
+  ESP_LOGI(TAG, "Apator T2 command queued; waiting for the target meter telegram");
   return true;
 }
 
