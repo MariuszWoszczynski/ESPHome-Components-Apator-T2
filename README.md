@@ -146,3 +146,57 @@ wmbus_radio:
 For SX1276, `reset_pin` should be connected to the reset pin and `irq_pin` should be connected to the DIO1 pin of the radio module.
 
 The `on_frame` trigger can be used to send received wM-Bus packets to a remote server using `socket_transmitter` component. It can also be used to process packets in any other way, such as sending them to MQTT broker or HTTP server.
+
+### Experimental Apator AT-WMBUS-16-1 programming
+
+The SX1276 radio can arm a write of the five transmission-period profiles in an
+AT-WMBUS-16-1 overlay. The command is not sent immediately. It is retained until
+the radio receives a T1 telegram with the selected meter ID, then sent in that
+meter's T2 response window on 868.3 MHz. This mirrors the task scheduling done by
+the Apator programmer.
+
+```yaml
+wmbus_radio:
+  id: radio_component
+  radio_type: SX1276
+  cs_pin: GPIO3
+  reset_pin: GPIO4
+  irq_pin: GPIO5
+  on_apator_programming_result:
+    then:
+      - logger.log:
+          format: "Apator result=%s, requested=%u s, read=%u s"
+          args: [ 'result.c_str()', 'desired_period', 'actual_period' ]
+
+button:
+  - platform: template
+    name: "Set Apator period to 60 seconds"
+    on_press:
+      - wmbus_radio.apator_set_period:
+          id: radio_component
+          meter_id: "12345678"
+          period: 60       # 10..2550 seconds, in steps of 10
+          attempts: 3      # retry on this many matching meter telegrams
+          power_dbm: 10    # SX1276 PA_BOOST output, 2..17 dBm
+          version: 5       # AT-WMBUS-16-1 default recovered from inkaSOID
+          device_type: 7
+          aes_key: "00000000000000000000000000000000"
+```
+
+`period` is written to all five profiles: normal, economy hours, economy days
+of week, economy days of month and economy months. After the write, the component
+requires the overlay's positive acknowledgement. On the next matching uplink it
+reads register `0xB0` back and reports `verified` only when all five returned
+periods equal the requested value. Timeouts retry the current stage; an explicit
+overlay error or a readback mismatch ends the transaction.
+
+`on_apator_programming_result` exposes `result`, `desired_period` and
+`actual_period` to ESPHome automations. Possible final results include `verified`,
+`write_ack_timeout`, `readback_timeout`, `readback_mismatch`, `radio_error` and
+`overlay_error_*`. Keep the device close during the first test and record its
+current configuration.
+
+The defaults target hardware type `7`, software version `5` and use an all-zero
+AES key. Override `device_type`, `version` or `aes_key` only when the values on
+the overlay differ. The reverse-engineered wire format is documented in
+[`docs/apator_t2_protocol.md`](docs/apator_t2_protocol.md).

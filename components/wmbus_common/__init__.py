@@ -68,12 +68,34 @@ CONFIG_SCHEMA = cv.Schema(
 )
 
 
+def _request_configured_drivers(config):
+    """Restore driver requests from validated config before source generation.
+
+    ESPHome may reload external component Python modules between validation and
+    code generation. DriverManager's in-memory request set must therefore not
+    be the sole source of truth. The validated config already contains Driver
+    objects, so rebuild the request set from it immediately before syncing the
+    generated C++ driver sources.
+    """
+    for driver_config in config.get(CONF_DRIVERS, []):
+        driver = driver_config[CONF_NAME]
+        DriverManager.request_driver(driver.name)
+
+    for meter_config in CORE.config.get("wmbus_meter", []):
+        driver = meter_config.get("type")
+        if isinstance(driver, Driver):
+            DriverManager.request_driver(driver.name)
+        elif driver is not None:
+            DriverManager.request_driver(str(driver).split(":", 1)[0])
+
+
 async def to_code(config):
     cg.add_define(
         "WMBUSMETERS_TAG",
         CURRENT_DIR.joinpath(".wmbusmeters_tag").read_text(),
     )
 
+    _request_configured_drivers(config)
     target_dir = CORE.relative_src_path("wmbusmeters_drivers")
     DriverManager.sync_to_directory(target_dir)
 

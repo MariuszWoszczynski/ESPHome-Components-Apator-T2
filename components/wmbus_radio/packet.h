@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <array>
 
 #include "esphome/core/helpers.h"
 #include "esphome/components/wmbus_common/wmbus.h"
@@ -24,14 +25,15 @@ struct Packet {
  public:
   Packet();
 
-  uint8_t *rx_data_ptr();
-  size_t rx_capacity();
+  uint8_t *prepare_rx_buffer(size_t *length);
   bool calculate_payload_size();
   void set_rssi(int8_t rssi);
   bool validate_preamble();
 
   std::optional<Frame> convert_to_frame();
   const std::vector<uint8_t> &get_raw_data() const;
+  bool matches_meter_id(const std::array<uint8_t, 4> &meter_id_bcd) const;
+  bool decode_t1_format_a(std::vector<uint8_t> *frame) const;
 
  protected:
   std::vector<uint8_t> data_;

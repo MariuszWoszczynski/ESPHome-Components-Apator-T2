@@ -1,5 +1,7 @@
 #include "transceiver_sx1276.h"
 
+#include <algorithm>
+
 #include "esphome/core/log.h"
 
 #define F_OSC (32000000)
@@ -104,6 +106,106 @@ bool IRAM_ATTR SX1276::read(uint8_t *buffer, size_t length) {
   }
 
   return true;
+}
+
+void SX1276::spi_write_burst_(uint8_t address, const uint8_t *data, size_t length) {
+  this->delegate_->begin_transaction();
+  this->delegate_->transfer(0x80 | address);
+  for (size_t i = 0; i < length; i++)
+    this->delegate_->transfer(data[i]);
+  this->delegate_->end_transaction();
+}
+
+bool SX1276::transmit_t2(const std::vector<uint8_t> &payload, uint8_t power_dbm) {
+  // A fixed-length FSK packet uses a one-byte length register.  The Apator
+  // configuration telegrams are well below this limit after Manchester coding.
+  if (payload.empty() || payload.size() > 255 || power_dbm < 2 || power_dbm > 17) {
+    ESP_LOGE(TAG, "Invalid T2 payload (%zu bytes) or power (%u dBm)", payload.size(), power_dbm);
+    return false;
+  }
+
+  static const uint8_t SAVED_REGISTERS[] = {0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x25, 0x26,
+                                            0x27, 0x28, 0x29, 0x2A, 0x30, 0x31, 0x32, 0x35, 0x40, 0x5D};
+  uint8_t saved[sizeof(SAVED_REGISTERS)];
+
+  this->spi_write(0x01, (uint8_t) 0b001);  // standby
+  for (size_t i = 0; i < sizeof(SAVED_REGISTERS); i++)
+    saved[i] = this->spi_read(SAVED_REGISTERS[i]);
+
+  // EN 13757 T2 other-to-meter PHY: 868.3 MHz, +/-50 kHz FSK, 32.768 kcps,
+  // Manchester data and the S/T2 O2M synchronisation sequence.  Manchester is
+  // produced in software, so the packet engine remains in raw NRZ mode.
+  const uint32_t frequency = 868300000;
+  const uint32_t frf = ((uint64_t) frequency * (1 << 19)) / F_OSC;
+  this->spi_write(0x06, {BYTE(frf, 2), BYTE(frf, 1), BYTE(frf, 0)});
+
+  const uint16_t freq_dev = 50000;
+  const uint16_t frd = ((uint64_t) freq_dev * (1 << 19)) / F_OSC;
+  this->spi_write(0x04, {BYTE(frd, 1), BYTE(frd, 0)});
+
+  const uint32_t bitrate = 32768;
+  uint32_t br = (F_OSC << 4) / bitrate;
+  this->spi_write(0x5D, (uint8_t) (br & 0x0F));
+  br >>= 4;
+  this->spi_write(0x02, {BYTE(br, 1), BYTE(br, 0)});
+
+  this->spi_write(0x25, {0x00, 0x04});  // 32 alternating preamble chips
+  this->spi_write(0x27, {(uint8_t) ((1 << 5) | (1 << 4) | (3 - 1)), 0x54, 0x76, 0x96});
+  this->spi_write(0x30, (uint8_t) 0x00);  // fixed length, raw, no hardware CRC
+  this->spi_write(0x31, (uint8_t) 0x40);  // packet mode
+  this->spi_write(0x32, (uint8_t) payload.size());
+  this->spi_write(0x35, (uint8_t) 0x9F);                      // TxStart on non-empty FIFO, threshold 31
+  this->spi_write(0x40, (uint8_t) 0x00);                      // DIO0 PacketSent, DIO1 FifoLevel
+  this->spi_write(0x09, (uint8_t) (0x80 | (power_dbm - 2)));  // PA_BOOST, 2..17 dBm
+
+  // Clear a possible FIFO overrun and stream in chunks.  Writing when
+  // FifoLevel is clear guarantees at least 32 free bytes in the 64-byte FIFO.
+  this->spi_write(0x3F, (uint8_t) 0x10);
+  size_t offset = 0;
+  size_t chunk = std::min((size_t) 32, payload.size());
+  this->spi_write_burst_(0x00, payload.data(), chunk);
+  offset += chunk;
+  this->spi_write(0x01, (uint8_t) 0b011);  // TX
+
+  const uint32_t started = millis();
+  bool ok = true;
+  while (offset < payload.size()) {
+    if (!(this->spi_read(0x3F) & 0x20)) {
+      chunk = std::min((size_t) 32, payload.size() - offset);
+      this->spi_write_burst_(0x00, payload.data() + offset, chunk);
+      offset += chunk;
+    }
+    if (millis() - started > 250) {
+      ok = false;
+      break;
+    }
+    yield();
+  }
+
+  while (ok && !(this->spi_read(0x3F) & 0x08)) {
+    if (millis() - started > 250) {
+      ok = false;
+      break;
+    }
+    yield();
+  }
+
+  this->spi_write(0x01, (uint8_t) 0b001);  // standby before restoring RX
+  for (size_t i = 0; i < sizeof(SAVED_REGISTERS); i++)
+    this->spi_write(SAVED_REGISTERS[i], saved[i]);
+
+  // Do not call restart_rx() here: its settling delays would make us deaf
+  // during the overlay's immediate T2 response.  Clear TX notifications/FIFO
+  // while still in standby and enter the restored receiver directly.
+  this->spi_write(0x3F, (uint8_t) 0x10);
+  ulTaskNotifyTake(pdTRUE, 0);
+  this->spi_write(0x01, (uint8_t) 0b101);
+
+  if (ok)
+    ESP_LOGI(TAG, "T2 telegram sent (%zu Manchester bytes, %u dBm)", payload.size(), power_dbm);
+  else
+    ESP_LOGE(TAG, "T2 transmit timeout");
+  return ok;
 }
 
 void SX1276::restart_rx() {

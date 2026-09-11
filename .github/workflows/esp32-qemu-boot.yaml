@@ -1,0 +1,103 @@
+name: ESP32 QEMU boot smoke test
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  qemu_boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: normal
+            config: tests/boot_sim.yaml
+          - variant: asserts-off
+            config: tests/boot_sim_asserts_off.yaml
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ESPHome
+        run: pip install esphome==2026.8.2
+
+      - name: Build hardware-matching ESP32 firmware
+        run: esphome compile "${{ matrix.config }}"
+
+      - name: Locate and prepare merged flash image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="$(find tests/.esphome/build -type f -name 'firmware.factory.bin' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
+          if [ -z "$IMAGE" ]; then
+            echo "Merged ESP32 factory image not found"
+            find tests/.esphome/build -type f -name '*.bin' -print || true
+            exit 1
+          fi
+          cp "$IMAGE" qemu_flash.bin
+          truncate -s 4M qemu_flash.bin
+          echo "image=$GITHUB_WORKSPACE/qemu_flash.bin" >> "$GITHUB_OUTPUT"
+          ls -lh "$IMAGE" qemu_flash.bin
+
+      - name: Install Espressif QEMU dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0 xz-utils
+
+      - name: Install Espressif QEMU for Xtensa
+        shell: bash
+        run: |
+          set -euo pipefail
+          QEMU_URL="https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz"
+          curl -fL "$QEMU_URL" -o /tmp/qemu.tar.xz
+          echo "0eecb2a34a5586c0e59110f77b9343b7b336e82fdb0e1a30e1dc1bab8a547e35  /tmp/qemu.tar.xz" | sha256sum -c -
+          mkdir -p "$HOME/qemu-xtensa"
+          tar -xJf /tmp/qemu.tar.xz -C "$HOME/qemu-xtensa" --strip-components=1
+          find "$HOME/qemu-xtensa" -type f -name qemu-system-xtensa -print
+
+      - name: Boot firmware in ESP32 QEMU
+        shell: bash
+        env:
+          FLASH_IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          QEMU="$(find "$HOME/qemu-xtensa" -type f -name qemu-system-xtensa | head -n1)"
+          test -x "$QEMU"
+
+          set +e
+          timeout 25s "$QEMU" \
+            -nographic \
+            -machine esp32 \
+            -drive "file=${FLASH_IMAGE},if=mtd,format=raw" \
+            -global driver=timer.esp32.timg,property=wdt_disable,value=true \
+            > qemu-boot.log 2>&1
+          QEMU_STATUS=$?
+          set -e
+
+          cat qemu-boot.log
+
+          if grep -Eqi 'Guru Meditation|LoadProhibited|StoreProhibited|abort\(\)|panic.ed|Backtrace:' qemu-boot.log; then
+            echo 'ESP32 panic/bootloop signature detected'
+            exit 1
+          fi
+
+          if ! grep -q 'BOOT_SIM_OK' qemu-boot.log; then
+            echo "Firmware did not reach ESPHome on_boot marker (QEMU status: ${QEMU_STATUS})"
+            exit 1
+          fi
+
+          echo 'ESP32 firmware reached BOOT_SIM_OK without panic'
+
+      - name: Upload QEMU serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-qemu-boot-log-${{ matrix.variant }}
+          path: qemu-boot.log
+          if-no-files-found: ignore

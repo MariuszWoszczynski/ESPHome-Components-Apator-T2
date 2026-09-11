@@ -18,9 +18,13 @@ std::vector<std::string> sorted_driver_names() {
   return driver_names;
 }
 
-const std::vector<std::string> driver_names = std::move(sorted_driver_names());
-
 void WMBusCommon::dump_config() {
+  // Driver registration is performed by static initializers. Never touch the
+  // registry from another global initializer because cross-TU initialization
+  // order is unspecified and changes when new source files (such as T2) are
+  // linked into the firmware.
+  const auto driver_names = sorted_driver_names();
+
   ESP_LOGCONFIG(TAG, "wM-Bus Component:");
   ESP_LOGCONFIG(TAG, "  wmbusmeters version: %s", WMBUSMETERS_TAG);
   ESP_LOGCONFIG(TAG, "  Loaded drivers:");

@@ -1,0 +1,164 @@
+name: Registry fix and ESP32 boot verification
+
+on:
+  push:
+    branches: [apator-t2-programming]
+    paths:
+      - '.github/workflows/registry-fix-verify.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix_build_boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: apator-t2-programming
+          fetch-depth: 0
+
+      - name: Patch driver registry initialization at source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('components/wmbus_common/meters.cc')
+          s = p.read_text()
+
+          replacements = [
+              (
+                  '''std::vector<DriverInfo*> &allDrivers()\n{\n    return *registered_drivers_list_;\n}''',
+                  '''std::vector<DriverInfo*> &allDrivers()\n{\n    verifyDriverLookupCreated();\n    return *registered_drivers_list_;\n}'''
+              ),
+              (
+                  '''void removeDriver(const std::string &name, std::string explanation)\n{\n    for (auto i = registered_drivers_list_->begin();''',
+                  '''void removeDriver(const std::string &name, std::string explanation)\n{\n    verifyDriverLookupCreated();\n    for (auto i = registered_drivers_list_->begin();'''
+              ),
+              (
+                  '''    // Check that the driver name has not been registered before!\n    assert(lookupDriver(di.name().str()) == NULL);''',
+                  '''    // Initialize the registry explicitly. Never depend on assert() side effects:\n    // assertions are compiled out when NDEBUG is defined (ESP-IDF release builds).\n    verifyDriverLookupCreated();\n    DriverInfo *existing = lookupDriver(di.name().str());\n\n    // Check that the driver name has not been registered before!\n    assert(existing == NULL);\n    (void) existing;'''
+              ),
+          ]
+
+          for old, new in replacements:
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f'Expected exactly one source match, got {n}: {old[:80]!r}')
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Verify registry fix is independent of assert
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          s = Path('components/wmbus_common/meters.cc').read_text()
+          assert 'std::vector<DriverInfo*> &allDrivers()\n{\n    verifyDriverLookupCreated();' in s
+          assert 'void removeDriver(const std::string &name, std::string explanation)\n{\n    verifyDriverLookupCreated();' in s
+          assert 'DriverInfo *existing = lookupDriver(di.name().str());' in s
+          assert 'assert(lookupDriver(di.name().str()) == NULL);' not in s
+          print('REGISTRY_SOURCE_FIX_OK')
+          PY
+          git diff --check
+          git diff -- components/wmbus_common/meters.cc
+
+      - name: Commit source fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add components/wmbus_common/meters.cc
+          git commit -m 'Fix driver registry initialization before static registration'
+          git push origin HEAD:apator-t2-programming
+          echo "FIX_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ESPHome
+        run: pip install esphome==2026.8.2
+
+      - name: Compile hardware-matching ESP32 firmware
+        run: esphome compile tests/boot_sim.yaml
+
+      - name: Locate firmware artifacts
+        id: fw
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="$(find tests/.esphome/build -type f -name 'firmware.factory.bin' | head -n1)"
+          ELF="$(find tests/.esphome/build -type f -name 'firmware.elf' | head -n1)"
+          test -n "$IMAGE" && test -f "$IMAGE"
+          test -n "$ELF" && test -f "$ELF"
+          cp "$IMAGE" qemu_flash.bin
+          cp "$ELF" firmware.elf
+          cp "$IMAGE" firmware.factory.bin
+          truncate -s 4M qemu_flash.bin
+          echo "image=$GITHUB_WORKSPACE/qemu_flash.bin" >> "$GITHUB_OUTPUT"
+          ls -lh firmware.elf firmware.factory.bin qemu_flash.bin
+
+      - name: Install Espressif QEMU dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0 xz-utils
+
+      - name: Install Espressif QEMU for Xtensa
+        shell: bash
+        run: |
+          set -euo pipefail
+          QEMU_URL='https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz'
+          curl -fL "$QEMU_URL" -o /tmp/qemu.tar.xz
+          echo '0eecb2a34a5586c0e59110f77b9343b7b336e82fdb0e1a30e1dc1bab8a547e35  /tmp/qemu.tar.xz' | sha256sum -c -
+          mkdir -p "$HOME/qemu-xtensa"
+          tar -xJf /tmp/qemu.tar.xz -C "$HOME/qemu-xtensa" --strip-components=1
+          QEMU="$(find "$HOME/qemu-xtensa" -type f -name qemu-system-xtensa | head -n1)"
+          test -x "$QEMU"
+          echo "QEMU=$QEMU" >> "$GITHUB_ENV"
+
+      - name: Boot firmware in ESP32 QEMU
+        shell: bash
+        env:
+          FLASH_IMAGE: ${{ steps.fw.outputs.image }}
+        run: |
+          set -euo pipefail
+          set +e
+          timeout 25s "$QEMU" \
+            -nographic \
+            -machine esp32 \
+            -drive "file=${FLASH_IMAGE},if=mtd,format=raw" \
+            -global driver=timer.esp32.timg,property=wdt_disable,value=true \
+            > qemu-boot.log 2>&1
+          QEMU_STATUS=$?
+          set -e
+          cat qemu-boot.log
+          if grep -Eqi 'Guru Meditation|LoadProhibited|StoreProhibited|abort\(\)|panic.ed|Backtrace:' qemu-boot.log; then
+            echo 'ESP32 panic/bootloop signature detected'
+            exit 1
+          fi
+          if ! grep -q 'BOOT_SIM_OK' qemu-boot.log; then
+            echo "Firmware did not reach ESPHome on_boot marker (QEMU status: ${QEMU_STATUS})"
+            exit 1
+          fi
+          echo "BOOT_QEMU_OK commit=${FIX_COMMIT}"
+
+      - name: Upload exact boot artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registry-fix-boot-artifacts
+          path: |
+            firmware.elf
+            firmware.factory.bin
+            qemu_flash.bin
+            qemu-boot.log
+          if-no-files-found: ignore
