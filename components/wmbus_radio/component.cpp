@@ -30,6 +30,12 @@ void Radio::setup() {
 }
 
 void Radio::loop() {
+  if (this->radio == nullptr || this->radio->is_failed()) {
+    ESP_LOGE(TAG, "Radio transceiver is unavailable; receiver task will not be started");
+    this->mark_failed();
+    return;
+  }
+
   if (this->receiver_task_handle_ == nullptr) {
     if (xTaskCreate((TaskFunction_t) this->receiver_task, "radio_recv", 3 * 1024, this, 2,
                     &(this->receiver_task_handle_)) != pdPASS) {
