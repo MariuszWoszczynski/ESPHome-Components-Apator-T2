@@ -5,6 +5,19 @@ esphome:
     then:
       - logger.log:
           level: INFO
+          format: "APATOR_ACTION_BEGIN"
+      - wmbus_radio.apator_set_period:
+          id: wmbus_radio_component
+          meter_id: "12345678"
+          period: 60
+          attempts: 1
+          power_dbm: 10
+      - logger.log:
+          level: INFO
+          format: "APATOR_ACTION_OK"
+      - delay: 1s
+      - logger.log:
+          level: INFO
           format: "BOOT_SIM_OK"
 
 esp32:
@@ -37,7 +50,7 @@ wmbus_radio:
 
 wmbus_meter:
   - id: water_meter_apator
-    meter_id: "07208205"
+    meter_id: "12345678"
     type: apator162
     key: "00000000000000000000000000000000"
 
@@ -47,7 +60,7 @@ button:
     on_press:
       - wmbus_radio.apator_set_period:
           id: wmbus_radio_component
-          meter_id: "07208205"
+          meter_id: "12345678"
           period: 60
           attempts: 1
           power_dbm: 10

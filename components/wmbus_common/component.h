@@ -7,6 +7,7 @@ extern const std::vector<std::string> driver_names;
 
 class WMBusCommon : public Component {
  public:
+  void load_drivers();
   void dump_config() override;
 };
 }  // namespace wmbus_common
