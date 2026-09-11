@@ -1,0 +1,45 @@
+esphome:
+  name: apator-boot-sim-off
+  platformio_options:
+    build_flags:
+      - -DNDEBUG
+  on_boot:
+    priority: -100
+    then:
+      - logger.log:
+          level: INFO
+          format: "BOOT_SIM_OK"
+
+esp32:
+  board: nodemcu-32s
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: ../components
+
+logger:
+  level: DEBUG
+
+spi:
+  clk_pin: GPIO33
+  mosi_pin: GPIO32
+  miso_pin: GPIO19
+
+wmbus_common:
+  drivers:
+    - name: ultrimis
+      fields: all
+
+wmbus_radio:
+  id: wmbus_radio_component
+  radio_type: SX1276
+  cs_pin: GPIO23
+  reset_pin: GPIO22
+  irq_pin: GPIO21
+
+wmbus_meter:
+  - id: water_meter_apator
+    meter_id: "07208205"
+    type: apator162
+    key: "00000000000000000000000000000000"

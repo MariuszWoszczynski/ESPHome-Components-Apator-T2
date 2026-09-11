@@ -119,7 +119,13 @@ class Driver:
             if f.field_type == FieldType.LIBRARY
         }
 
-        source = self.cpp_source
+        # GCC 14 with section garbage collection can discard the anonymous
+        # driver registration variable. Keep its dynamic initializer so each
+        # requested driver is present in the runtime registry.
+        source = self.cpp_source.replace(
+            "static bool ok = staticRegisterDriver(",
+            "__attribute__((used)) static bool ok = staticRegisterDriver(",
+        )
 
         def regular_field_replacer(match: re.Match) -> str:
             if match["comment_mark"] is not None:
