@@ -43,7 +43,7 @@ class DriverManager:
         if not self._requested_drivers:
             self.request_driver("unknown")
 
-        for driver in sorted(self._requested_drivers):
+        for driver in sorted(self._requested_drivers, key=lambda item: item.name):
             target_path = target_dir / f"{driver.name}.cpp"
             old_content = target_path.read_text() if target_path.exists() else ""
 
