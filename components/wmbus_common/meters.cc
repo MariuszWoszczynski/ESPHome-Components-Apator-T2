@@ -72,11 +72,13 @@ DriverInfo *lookupDriver(std::string name)
 
 std::vector<DriverInfo*> &allDrivers()
 {
+    verifyDriverLookupCreated();
     return *registered_drivers_list_;
 }
 
 void removeDriver(const std::string &name, std::string explanation)
 {
+    verifyDriverLookupCreated();
     for (auto i = registered_drivers_list_->begin(); i != registered_drivers_list_->end(); i++)
     {
         if ((*i)->name().str() == name)
@@ -165,8 +167,14 @@ bool staticRegisterDriver(function<void(DriverInfo&)> setup)
     DriverInfo di;
     setup(di);
 
+    // Initialize the registry explicitly. Never depend on assert() side effects:
+    // assertions are compiled out when NDEBUG is defined (ESP-IDF release builds).
+    verifyDriverLookupCreated();
+    DriverInfo *existing = lookupDriver(di.name().str());
+
     // Check that the driver name has not been registered before!
-    assert(lookupDriver(di.name().str()) == NULL);
+    assert(existing == NULL);
+    (void) existing;
 
     // Check that no other driver also triggers on the same detection values.
     for (auto &d : di.mvts())
