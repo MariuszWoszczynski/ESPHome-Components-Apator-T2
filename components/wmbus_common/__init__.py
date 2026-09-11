@@ -78,6 +78,7 @@ async def to_code(config):
     DriverManager.sync_to_directory(target_dir)
 
     var = cg.new_Pvariable(config[CONF_ID])
+    cg.add(var.load_drivers())
     await cg.register_component(var, config)
 
 

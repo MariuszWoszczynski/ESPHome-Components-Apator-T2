@@ -9,6 +9,15 @@ namespace esphome {
 namespace wmbus_common {
 static const char *TAG = "wmbus_common";
 
+bool force_link_requested_drivers();
+
+void WMBusCommon::load_drivers() {
+  if (!force_link_requested_drivers()) {
+    ESP_LOGE(TAG, "Failed to register requested wM-Bus drivers");
+    this->mark_failed();
+  }
+}
+
 std::vector<std::string> sorted_driver_names() {
   std::vector<std::string> driver_names;
   driver_names.reserve(allDrivers().size());
