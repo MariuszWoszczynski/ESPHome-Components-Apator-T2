@@ -35,11 +35,10 @@ class ApatorProgrammingResultTrigger : public Trigger<std::string, uint16_t, uin
 class ApatorReadResultTrigger : public Trigger<std::string, uint16_t, uint16_t, uint16_t, uint16_t, uint16_t> {
  public:
   explicit ApatorReadResultTrigger(wmbus_radio::Radio *radio) {
-    radio->on_apator_read_result(
-        [this](std::string result, uint16_t normal, uint16_t economy_hours, uint16_t economy_weekday,
-               uint16_t economy_month_day, uint16_t economy_month) {
-          this->trigger(result, normal, economy_hours, economy_weekday, economy_month_day, economy_month);
-        });
+    radio->on_apator_read_result([this](std::string result, uint16_t normal, uint16_t economy_hours,
+                                        uint16_t economy_weekday, uint16_t economy_month_day, uint16_t economy_month) {
+      this->trigger(result, normal, economy_hours, economy_weekday, economy_month_day, economy_month);
+    });
   }
 };
 
@@ -78,9 +77,9 @@ template<typename... Ts> class ApatorReadPeriodsAction : public Action<Ts...> {
   TEMPLATABLE_VALUE(uint8_t, power_dbm)
 
   void play(const Ts &...x) override {
-    this->parent_->arm_apator_period_read(
-        this->meter_id_.value(x...), this->version_.value(x...), this->device_type_.value(x...),
-        this->aes_key_.value(x...), this->attempts_.value(x...), this->power_dbm_.value(x...));
+    this->parent_->arm_apator_period_read(this->meter_id_.value(x...), this->version_.value(x...),
+                                          this->device_type_.value(x...), this->aes_key_.value(x...),
+                                          this->attempts_.value(x...), this->power_dbm_.value(x...));
   }
 
  protected:
