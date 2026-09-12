@@ -1,0 +1,8 @@
+[wokwi]
+version = 1
+firmware = "../../.esphome/build/apator-t2-wokwi/.pioenvs/apator-t2-wokwi/firmware.bin"
+elf = "../../.esphome/build/apator-t2-wokwi/.pioenvs/apator-t2-wokwi/firmware.elf"
+
+[[chip]]
+name = "sx1276"
+binary = "sx1276.chip.wasm"
