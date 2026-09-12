@@ -1,0 +1,5 @@
+{
+  "name": "SX1276 wM-Bus T2 test double",
+  "author": "MariuszWoszczynski / OpenAI",
+  "pins": ["VCC", "GND", "SCK", "MISO", "MOSI", "NSS", "RESET", "DIO1"]
+}
