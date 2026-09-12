@@ -37,6 +37,8 @@ CONF_ATTEMPTS = "attempts"
 CONF_POWER_DBM = "power_dbm"
 CONF_ON_APATOR_PROGRAMMING_RESULT = "on_apator_programming_result"
 CONF_APATOR_RESULT_TRIGGER_ID = "apator_result_trigger_id"
+CONF_ON_APATOR_READ_RESULT = "on_apator_read_result"
+CONF_APATOR_READ_RESULT_TRIGGER_ID = "apator_read_result_trigger_id"
 
 radio_ns = cg.esphome_ns.namespace("wmbus_radio")
 RadioComponent = radio_ns.class_("Radio", cg.Component)
@@ -50,9 +52,21 @@ Packet = radio_ns.class_("Packet")
 PacketPtr = Packet.operator("ptr")
 PacketTrigger = radio_ns.class_("PacketTrigger", automation.Trigger.template(PacketPtr))
 ApatorSetPeriodAction = radio_ns.class_("ApatorSetPeriodAction", automation.Action)
+ApatorReadPeriodsAction = radio_ns.class_("ApatorReadPeriodsAction", automation.Action)
 ApatorProgrammingResultTrigger = radio_ns.class_(
     "ApatorProgrammingResultTrigger",
     automation.Trigger.template(cg.std_string, cg.uint16, cg.uint16),
+)
+ApatorReadResultTrigger = radio_ns.class_(
+    "ApatorReadResultTrigger",
+    automation.Trigger.template(
+        cg.std_string,
+        cg.uint16,
+        cg.uint16,
+        cg.uint16,
+        cg.uint16,
+        cg.uint16,
+    ),
 )
 
 TRANSCEIVER_NAMES = {
@@ -85,6 +99,13 @@ CONFIG_SCHEMA = (
                     cv.GenerateID(CONF_APATOR_RESULT_TRIGGER_ID): cv.declare_id(
                         ApatorProgrammingResultTrigger
                     ),
+                }
+            ),
+            cv.Optional(CONF_ON_APATOR_READ_RESULT): automation.validate_automation(
+                {
+                    cv.GenerateID(
+                        CONF_APATOR_READ_RESULT_TRIGGER_ID
+                    ): cv.declare_id(ApatorReadResultTrigger),
                 }
             ),
         }
@@ -141,6 +162,21 @@ async def to_code(config):
                 (cg.std_string, "result"),
                 (cg.uint16, "desired_period"),
                 (cg.uint16, "actual_period"),
+            ],
+            conf,
+        )
+
+    for conf in config.get(CONF_ON_APATOR_READ_RESULT, []):
+        trig = cg.new_Pvariable(conf[CONF_APATOR_READ_RESULT_TRIGGER_ID], var)
+        await automation.build_automation(
+            trig,
+            [
+                (cg.std_string, "result"),
+                (cg.uint16, "normal_period"),
+                (cg.uint16, "economy_hours_period"),
+                (cg.uint16, "economy_weekday_period"),
+                (cg.uint16, "economy_month_day_period"),
+                (cg.uint16, "economy_month_period"),
             ],
             conf,
         )
@@ -238,6 +274,37 @@ async def apator_set_period_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg, parent)
     cg.add(var.set_meter_id(await cg.templatable(config[CONF_METER_ID], args, cg.std_string)))
     cg.add(var.set_period_seconds(await cg.templatable(config[CONF_PERIOD], args, cg.uint16)))
+    cg.add(var.set_version(await cg.templatable(config[CONF_VERSION], args, cg.uint8)))
+    cg.add(var.set_device_type(await cg.templatable(config[CONF_DEVICE_TYPE], args, cg.uint8)))
+    cg.add(var.set_aes_key(await cg.templatable(config[CONF_AES_KEY], args, cg.std_string)))
+    cg.add(var.set_attempts(await cg.templatable(config[CONF_ATTEMPTS], args, cg.uint8)))
+    cg.add(var.set_power_dbm(await cg.templatable(config[CONF_POWER_DBM], args, cg.uint8)))
+    return var
+
+
+APATOR_READ_PERIODS_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(RadioComponent),
+        cv.Required(CONF_METER_ID): cv.templatable(validate_apator_meter_id),
+        cv.Optional(CONF_VERSION, default=5): cv.templatable(cv.int_range(min=0, max=255)),
+        cv.Optional(CONF_DEVICE_TYPE, default=7): cv.templatable(cv.int_range(min=0, max=255)),
+        cv.Optional(CONF_AES_KEY, default="00000000000000000000000000000000"): cv.templatable(validate_apator_key),
+        cv.Optional(CONF_ATTEMPTS, default=3): cv.templatable(cv.int_range(min=1, max=10)),
+        cv.Optional(CONF_POWER_DBM, default=10): cv.templatable(cv.int_range(min=2, max=17)),
+    }
+)
+
+
+@automation.register_action(
+    "wmbus_radio.apator_read_periods",
+    ApatorReadPeriodsAction,
+    APATOR_READ_PERIODS_SCHEMA,
+    synchronous=True,
+)
+async def apator_read_periods_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, parent)
+    cg.add(var.set_meter_id(await cg.templatable(config[CONF_METER_ID], args, cg.std_string)))
     cg.add(var.set_version(await cg.templatable(config[CONF_VERSION], args, cg.uint8)))
     cg.add(var.set_device_type(await cg.templatable(config[CONF_DEVICE_TYPE], args, cg.uint8)))
     cg.add(var.set_aes_key(await cg.templatable(config[CONF_AES_KEY], args, cg.std_string)))

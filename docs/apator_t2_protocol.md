@@ -22,6 +22,11 @@ TX. The implementation follows the inkaSOID transaction:
 5. send a read request for register `0xB0`;
 6. decrypt the response and compare all five periods with the requested value.
 
+A read-only transaction is also available. It skips the write and ACK stages,
+waits for the selected overlay's normal T1 uplink, sends the register `0xB0`
+read request in the T2 response window and reports all five stored periods.
+The read-only operation does not modify the overlay.
+
 Timeouts retry the current stage on a later matching uplink. An explicit error
 from the overlay and a readback mismatch end the transaction immediately.
 
@@ -63,6 +68,40 @@ where `PP = period_seconds / 10`.
 
 The read request uses the same envelope with overlay instruction `0x01` and a
 single data byte `B0`. The write instruction is `0x02`.
+
+## ESPHome read-only action
+
+The `wmbus_radio.apator_read_periods` action can be attached to a template
+button, which is then exposed by the ESPHome web server:
+
+```yaml
+wmbus_radio:
+  id: radio_component
+  # existing radio configuration...
+  on_apator_read_result:
+    - logger.log:
+        format: "Apator periods: normal=%u h=%u wd=%u md=%u m=%u"
+        args:
+          - normal_period
+          - economy_hours_period
+          - economy_weekday_period
+          - economy_month_day_period
+          - economy_month_period
+
+button:
+  - platform: template
+    name: "Apator odczytaj bieżące okresy"
+    on_press:
+      - wmbus_radio.apator_read_periods:
+          id: radio_component
+          meter_id: "07208205"
+          attempts: 3
+          power_dbm: 10
+```
+
+After pressing the button, the action remains armed until the matching normal
+uplink arrives. A successful callback has result `read`; failures report the
+same radio or readback timeout strings used by the programming transaction.
 
 ## Responses
 

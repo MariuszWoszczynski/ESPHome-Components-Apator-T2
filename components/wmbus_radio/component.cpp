@@ -52,6 +52,15 @@ void Radio::loop() {
     }
   }
 
+  if (this->read_result_queue_ != nullptr) {
+    ReadResult *result;
+    while (xQueueReceive(this->read_result_queue_, &result, 0) == pdPASS) {
+      const auto &p = result->periods;
+      this->on_apator_read_result_callback_manager_.call(result->result, p[0], p[1], p[2], p[3], p[4]);
+      delete result;
+    }
+  }
+
   Packet *p;
   if (xQueueReceive(this->packet_queue_, &p, 0) != pdPASS)
     return;
@@ -120,7 +129,7 @@ void Radio::receive_frame() {
     return;
   }
 
-  if (this->pending_command_ != nullptr && packet->matches_meter_id(this->pending_command_->write_frame.meter_id_bcd)) {
+  if (this->pending_command_ != nullptr && packet->matches_meter_id(this->pending_command_->read_frame.meter_id_bcd)) {
     ESP_LOGI(TAG, "Target Apator telegram received; replying in the T2 window");
     delay_microseconds_safe(2000);
     this->transmit_pending_command_();
@@ -172,7 +181,7 @@ void Radio::transmit_pending_command_() {
       ESP_LOGW(TAG, "Ignoring Apator response with invalid 3-of-6 coding or DLL CRC");
       continue;
     }
-    const auto reply = parse_apator_t2_reply(logical_frame, this->pending_command_->write_frame.meter_id_bcd,
+    const auto reply = parse_apator_t2_reply(logical_frame, this->pending_command_->read_frame.meter_id_bcd,
                                              this->pending_command_->aes_key_hex);
     if (reply.type == ApatorReplyType::NOT_FOR_US)
       continue;
@@ -187,6 +196,15 @@ void Radio::transmit_pending_command_() {
       return;
     }
     if (!is_write && reply.type == ApatorReplyType::PERIOD_READ) {
+      if (this->pending_command_->stage == PendingCommand::Stage::READ_ONLY) {
+        const auto &p = reply.periods_seconds;
+        ESP_LOGI(TAG,
+                 "Apator register 0xB0 read: normal=%u s, economy-hours=%u s, economy-weekday=%u s, "
+                 "economy-month-day=%u s, economy-month=%u s",
+                 p[0], p[1], p[2], p[3], p[4]);
+        this->finish_read_("read", p);
+        return;
+      }
       const uint16_t actual = reply.periods_seconds[0];
       const bool all_match =
           std::all_of(reply.periods_seconds.begin(), reply.periods_seconds.end(),
@@ -228,7 +246,10 @@ void Radio::command_failed_(const char *reason) {
     this->pending_command_->attempts_left--;
   if (this->pending_command_->attempts_left == 0) {
     ESP_LOGE(TAG, "Apator transaction failed: %s", reason);
-    this->finish_command_(reason);
+    if (this->pending_command_->stage == PendingCommand::Stage::READ_ONLY)
+      this->finish_read_(reason);
+    else
+      this->finish_command_(reason);
   } else {
     ESP_LOGW(TAG, "Apator %s; retry armed for %u more target telegram(s)", reason,
              this->pending_command_->attempts_left);
@@ -242,6 +263,18 @@ void Radio::finish_command_(const std::string &result, uint16_t actual_period) {
   auto *queued_result = new ProgrammingResult{result, desired, actual_period};
   if (this->result_queue_ == nullptr || xQueueSend(this->result_queue_, &queued_result, 0) != pdTRUE) {
     ESP_LOGW(TAG, "Apator result queue is unavailable or full");
+    delete queued_result;
+  }
+  delete this->pending_command_;
+  this->pending_command_ = nullptr;
+}
+
+void Radio::finish_read_(const std::string &result, const std::array<uint16_t, 5> &periods) {
+  if (this->pending_command_ == nullptr)
+    return;
+  auto *queued_result = new ReadResult{result, periods};
+  if (this->read_result_queue_ == nullptr || xQueueSend(this->read_result_queue_, &queued_result, 0) != pdTRUE) {
+    ESP_LOGW(TAG, "Apator read result queue is unavailable or full");
     delete queued_result;
   }
   delete this->pending_command_;
@@ -290,6 +323,44 @@ bool Radio::arm_apator_period(const std::string &meter_id, uint16_t period_secon
   return true;
 }
 
+bool Radio::arm_apator_period_read(const std::string &meter_id, uint8_t version, uint8_t device_type,
+                                   const std::string &aes_key_hex, uint8_t attempts, uint8_t power_dbm) {
+  if (this->command_queue_ == nullptr) {
+    this->command_queue_ = xQueueCreate(3, sizeof(PendingCommand *));
+    if (this->command_queue_ == nullptr) {
+      ESP_LOGE(TAG, "Failed to create Apator command queue");
+      return false;
+    }
+  }
+  if (this->read_result_queue_ == nullptr) {
+    this->read_result_queue_ = xQueueCreate(3, sizeof(ReadResult *));
+    if (this->read_result_queue_ == nullptr) {
+      ESP_LOGE(TAG, "Failed to create Apator read result queue");
+      return false;
+    }
+  }
+
+  auto *command = new PendingCommand();
+  command->stage = PendingCommand::Stage::READ_ONLY;
+  command->aes_key_hex = aes_key_hex;
+  command->attempts_left = attempts;
+  command->power_dbm = power_dbm;
+  if (attempts == 0 ||
+      !build_apator_period_read_frame(meter_id, version, device_type, aes_key_hex, &command->read_frame)) {
+    delete command;
+    ESP_LOGE(TAG, "Invalid Apator T2 read parameters");
+    return false;
+  }
+  if (xQueueSend(this->command_queue_, &command, 0) != pdTRUE) {
+    delete command;
+    ESP_LOGE(TAG, "Apator T2 command queue is full");
+    return false;
+  }
+  if (this->receiver_task_handle_ != nullptr)
+    xTaskNotifyGive(this->receiver_task_handle_);
+  return true;
+}
+
 void Radio::receiver_task(Radio *arg) {
   // Give setup() one scheduler tick to finish attaching DIO1 before RX starts.
   vTaskDelay(1);
@@ -308,6 +379,11 @@ void Radio::on_packet(std::function<void(Packet *)> &&callback) {
 
 void Radio::on_apator_result(std::function<void(std::string, uint16_t, uint16_t)> &&callback) {
   this->on_apator_result_callback_manager_.add(std::move(callback));
+}
+
+void Radio::on_apator_read_result(
+    std::function<void(std::string, uint16_t, uint16_t, uint16_t, uint16_t, uint16_t)> &&callback) {
+  this->on_apator_read_result_callback_manager_.add(std::move(callback));
 }
 
 }  // namespace wmbus_radio
