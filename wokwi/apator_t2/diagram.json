@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "author": "MariuszWoszczynski / OpenAI",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "chip-sx1276",
+      "id": "radio",
+      "top": -20,
+      "left": 260,
+      "attrs": {
+        "meterId": "7208205",
+        "version": "5",
+        "deviceType": "7",
+        "periodSeconds": "60",
+        "uplinkIntervalMs": "3000",
+        "responseMode": "0"
+      }
+    }
+  ],
+  "connections": [
+    ["esp:D33", "radio:SCK", "green", []],
+    ["esp:D32", "radio:MOSI", "blue", []],
+    ["esp:D19", "radio:MISO", "purple", []],
+    ["esp:D23", "radio:NSS", "orange", []],
+    ["esp:D22", "radio:RESET", "yellow", []],
+    ["esp:D21", "radio:DIO1", "gray", []],
+    ["esp:3V3", "radio:VCC", "red", []],
+    ["esp:GND.1", "radio:GND", "black", []]
+  ],
+  "dependencies": {}
+}
