@@ -17,7 +17,7 @@ esp32:
     type: esp-idf
 
 external_components:
-  - source: ../components
+  - source: ../../components
 
 logger:
   level: DEBUG
