@@ -12,6 +12,7 @@ frames and injects a simulated meter uplink and configuration responses.
 - FIFO reads and streamed FIFO writes
 - `FifoEmpty`, `FifoLevel`, `PayloadReady` and `PacketSent` flags
 - DIO1 falling edge when receive data becomes available
+- no DIO0 connection; TX completion is polled through `RegIrqFlags2`
 - periodic T1-format meter telegram for meter `07208205`
 - write ACK after the first T2 transmission
 - AES-128-CBC register `0xB0` readback after the second transmission
@@ -49,6 +50,19 @@ The model currently assumes the all-zero AES-128 key used by the test YAML.
 
 For the browser editor, upload `diagram.json`, `sx1276.chip.json` and
 `sx1276.chip.c`, then upload the merged ESP32 firmware produced by ESPHome.
+
+## Standalone browser smoke test
+
+To test the model without building ESPHome, create a new ESP32 project in the
+Wokwi browser editor and upload `diagram.json`, both `sx1276.chip.*` files and
+`smoke-test/sketch.ino`. The Chips Console must show, in order:
+
+1. an 18-byte encoded meter uplink,
+2. TX #1 followed by a 38-byte write ACK,
+3. another meter uplink,
+4. TX #2 followed by a 56-byte encrypted register `0xB0` readback.
+
+This exact sequence has been run against the checked-in model.
 
 ## Limits
 
