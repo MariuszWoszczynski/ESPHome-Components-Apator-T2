@@ -30,8 +30,26 @@ wmbus_radio:
     - logger.log:
         format: "Apator result=%s requested=%u read=%u"
         args: [ 'result.c_str()', 'desired_period', 'actual_period' ]
+  on_apator_read_result:
+    - logger.log:
+        format: "Apator read=%s normal=%u economy_hours=%u economy_weekday=%u economy_month_day=%u economy_month=%u"
+        args:
+          - 'result.c_str()'
+          - 'normal_period'
+          - 'economy_hours_period'
+          - 'economy_weekday_period'
+          - 'economy_month_day_period'
+          - 'economy_month_period'
 
 button:
+  - platform: template
+    name: "Read Apator current periods"
+    on_press:
+      - wmbus_radio.apator_read_periods:
+          id: radio_component
+          meter_id: "12345678"
+          attempts: 3
+          power_dbm: 10
   - platform: template
     name: "Arm Apator test period"
     on_press:
